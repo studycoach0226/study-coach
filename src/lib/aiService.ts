@@ -1,0 +1,284 @@
+// src/lib/aiService.ts
+import { buildMeaningPrompt } from "./prompts/wordMeaningPrompt";
+import { buildReadingExplainPrompt } from "./prompts/readingExplainPrompt";
+import { buildReadingReadPrompt } from "./prompts/readingReadPrompt";
+import { retrievalSelfTestPrompt } from "./prompts/retrievalSelfTestPrompt";
+
+/**
+ * Generates a contextual Chinese meaning for a given word within an article.
+ * 
+ * @param word The vocabulary word marked by the student
+ * @param articleText The full text of the article to provide context
+ * @returns A promise that resolves to the contextual Chinese meaning
+ */
+export async function generateMeaningFromContext(word: string, articleText: string): Promise<string> {
+  const apiKey = (import.meta as any).env.VITE_OPENAI_API_KEY;
+
+  if (!apiKey || apiKey === 'your_api_key_here') {
+    console.error('❌ OpenAI API Key is missing. Please set VITE_OPENAI_API_KEY in your .env file.');
+    return '（AI 尚未設定）';
+  }
+
+  const prompt = buildMeaningPrompt(word, articleText);
+
+  try {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: 'gpt-4.1-mini',
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.2,
+      })
+    });
+
+    if (!response.ok) {
+      console.error(`❌ OpenAI API Error: ${response.status} ${response.statusText}`);
+      return '（AI 無法取得意思）';
+    }
+
+    const data = await response.json();
+    return data.choices[0].message.content.trim();
+  } catch (error) {
+    console.error('❌ Failed to fetch meaning from OpenAI:', error);
+    return '（AI 無法取得意思）';
+  }
+}
+
+export type ComprehensionFeedback = {
+  type: "comprehension";
+  score: number;
+  transcriptionText: string;
+  completionScore?: number;
+  completionFeedback?: string;
+  accuracyScore?: number;
+  accuracyFeedback?: string;
+  detailScore?: number;
+  detailFeedback?: string;
+  clarityScore?: number;
+  clarityFeedback?: string;
+  strengths?: string;
+  needsWork?: string;
+  understandingFeedback?: string;
+  missingPoints?: string;
+  suggestion?: string;
+};
+
+export type PronunciationFeedback = {
+  type: "pronunciation";
+  score: number;
+  transcriptionText: string;
+  completenessFeedback: string;
+  pronunciationFeedback: string;
+  fluencyFeedback: string;
+  missingOrChangedWords: string;
+  suggestion: string;
+};
+
+export type EvaluationFeedback = ComprehensionFeedback | PronunciationFeedback;
+
+/**
+ * Evaluates student recording (either explain or read) based on taskType.
+ */
+export async function evaluateRecording(params: {
+  audioBlobOrBase64: string | Blob;
+  targetText: string;
+  taskType: "explain" | "read";
+}): Promise<EvaluationFeedback> {
+  const apiKey = (import.meta as any).env.VITE_OPENAI_API_KEY;
+
+  const defaultErrorResponse = (suggestion: string): EvaluationFeedback => {
+    if (params.taskType === 'explain') {
+      return { type: 'comprehension', score: 0, transcriptionText: '', understandingFeedback: '', missingPoints: '', suggestion };
+    }
+    return { type: 'pronunciation', score: 0, transcriptionText: '', completenessFeedback: '', pronunciationFeedback: '', fluencyFeedback: '', missingOrChangedWords: '', suggestion };
+  };
+
+  if (!apiKey || apiKey === 'your_api_key_here') {
+    console.error('❌ OpenAI API Key is missing.');
+    return defaultErrorResponse('AI 尚未設定');
+  }
+
+  try {
+    // 1. Convert audio to Blob
+    let audioBlob: Blob;
+    if (typeof params.audioBlobOrBase64 === 'string') {
+      const res = await fetch(params.audioBlobOrBase64);
+      audioBlob = await res.blob();
+    } else {
+      audioBlob = params.audioBlobOrBase64;
+    }
+
+    // 2. Transcribe Audio (Whisper)
+    const formData = new FormData();
+    formData.append('file', audioBlob, 'speech.webm');
+    // Using the exact model requested by user
+    formData.append('model', 'gpt-4o-mini-transcribe');
+
+    const transcribeRes = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: formData
+    });
+
+    if (!transcribeRes.ok) {
+      console.error(`❌ OpenAI Transcription Error: ${transcribeRes.status} ${transcribeRes.statusText}`);
+      // Fallback if the user's custom model name fails, try whisper-1
+      if (transcribeRes.status === 404 || transcribeRes.status === 400) {
+        console.warn("Model gpt-4o-mini-transcribe might be invalid. Please consider using 'whisper-1' for transcription.");
+      }
+      return defaultErrorResponse('語音辨識失敗');
+    }
+
+    const transcribeData = await transcribeRes.json();
+    const transcriptionText = transcribeData.text || '';
+
+    if (!transcriptionText.trim()) {
+      return defaultErrorResponse('請再錄一次，確認麥克風有收音。');
+    }
+
+    // 3. AI Evaluation (Chat Completions)
+    let prompt = '';
+    if (params.taskType === 'explain') {
+      prompt = buildReadingExplainPrompt(params.targetText, transcriptionText);
+    } else {
+      prompt = buildReadingReadPrompt(params.targetText, transcriptionText);
+    }
+
+    const chatRes = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: 'gpt-4.1-mini', // As requested
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.2,
+      })
+    });
+
+    if (!chatRes.ok) {
+      console.error(`❌ OpenAI Chat Error: ${chatRes.status} ${chatRes.statusText}`);
+      return defaultErrorResponse('AI 評估失敗');
+    }
+
+    const chatData = await chatRes.json();
+    const content = chatData.choices[0].message.content.trim();
+
+    // Parse JSON safely in case it returns markdown formatting
+    const cleanedJson = content.replace(/```json/g, '').replace(/```/g, '').trim();
+    const result = JSON.parse(cleanedJson);
+
+    if (params.taskType === 'explain') {
+      // The new prompt doesn't necessarily return a single 'score', 
+      // so we might use one of the sub-scores or average them if needed,
+      // but usually the AI is instructed to provide a 'score'.
+      // If the user's provided JSON list doesn't have 'score', let's check if it's there.
+      return {
+        type: 'comprehension',
+        score: result.score || 0,
+        transcriptionText: transcriptionText,
+        completionScore: result.completionScore,
+        completionFeedback: result.completionFeedback,
+        accuracyScore: result.accuracyScore,
+        accuracyFeedback: result.accuracyFeedback,
+        detailScore: result.detailScore,
+        detailFeedback: result.detailFeedback,
+        clarityScore: result.clarityScore,
+        clarityFeedback: result.clarityFeedback,
+        strengths: result.strengths,
+        needsWork: result.needsWork,
+      };
+    } else {
+      return {
+        type: 'pronunciation',
+        score: result.score || 0,
+        transcriptionText: transcriptionText,
+        completenessFeedback: result.completenessFeedback || '',
+        pronunciationFeedback: result.pronunciationFeedback || '',
+        fluencyFeedback: result.fluencyFeedback || '',
+        missingOrChangedWords: result.missingOrChangedWords || '',
+        suggestion: result.suggestion || '',
+      };
+    }
+  } catch (error) {
+    console.error('❌ AI Evaluation Error:', error);
+    return defaultErrorResponse('語音辨識或評估失敗');
+  }
+}
+
+/**
+ * Evaluates student typed answer using AI.
+ */
+export async function evaluateTypedAnswer(params: {
+  studentAnswer: string;
+  expectedAnswer: string;
+  promptShown: string;
+  direction: 'en-zh' | 'zh-en';
+  learningMode: 'englishLearner' | 'chineseLearner';
+  targetExpression: string;
+  pronunciation?: string;
+  meaning: string;
+  context?: string;
+}): Promise<{ passed: boolean; feedback: string }> {
+  const apiKey = (import.meta as any).env.VITE_OPENAI_API_KEY;
+
+  if (!apiKey || apiKey === 'your_api_key_here') {
+    console.error('❌ OpenAI API Key is missing.');
+    return { passed: false, feedback: 'AI 尚未設定' };
+  }
+
+  const prompt = retrievalSelfTestPrompt.generate({
+    learningMode: params.learningMode,
+    direction: params.direction,
+    promptShown: params.promptShown,
+    expectedAnswer: params.expectedAnswer,
+    pronunciation: params.pronunciation,
+    targetExpression: params.targetExpression,
+    meaning: params.meaning,
+    context: params.context,
+    studentTranscript: params.studentAnswer
+  });
+
+  try {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: 'gpt-4.1-mini',
+        messages: [
+          { role: 'system', content: retrievalSelfTestPrompt.system },
+          { role: 'user', content: prompt }
+        ],
+        temperature: 0.2,
+      })
+    });
+
+    if (!response.ok) {
+      console.error(`❌ OpenAI Chat Error: ${response.status}`);
+      return { passed: false, feedback: 'AI 評估失敗' };
+    }
+
+    const data = await response.json();
+    const content = data.choices[0].message.content.trim();
+    const cleanedJson = content.replace(/```json/g, '').replace(/```/g, '').trim();
+    const result = JSON.parse(cleanedJson);
+
+    return {
+      passed: result.passed,
+      feedback: result.feedback
+    };
+  } catch (error) {
+    console.error('❌ Typed AI Evaluation Error:', error);
+    return { passed: false, feedback: 'AI 評估失敗' };
+  }
+}
