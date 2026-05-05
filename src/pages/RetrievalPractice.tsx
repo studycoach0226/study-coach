@@ -17,7 +17,7 @@ export default function RetrievalPractice() {
   const [mode, setMode] = useState<'selection' | 'flashcard' | 'test'>('selection');
 
   // Flashcard states
-  const [fcDirection, setFcDirection] = useState<'en-zh' | 'zh-en' | 'auto'>('auto');
+  const [fcDirection, setFcDirection] = useState<'l1-l2' | 'l2-l1' | 'auto'>('auto');
   const [isFlipped, setIsFlipped] = useState(false);
 
   // Self Test states
@@ -25,7 +25,7 @@ export default function RetrievalPractice() {
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error', msg: string } | null>(null);
   const [showHints, setShowHints] = useState(false);
   const [answerMode, setAnswerMode] = useState<'voice' | 'type'>('type');
-  const [testDirection, setTestDirection] = useState<'en-zh' | 'zh-en' | 'auto'>('auto');
+  const [testDirection, setTestDirection] = useState<'l1-l2' | 'l2-l1'>('l1-l2');
   const [isRecording, setIsRecording] = useState(false);
   const [isEvaluating, setIsEvaluating] = useState(false);
   const [recordedBlobUrl, setRecordedBlobUrl] = useState<string | null>(null);
@@ -150,15 +150,20 @@ export default function RetrievalPractice() {
 
     const currentPair = practiceQueue[currentIndex];
     const item = currentPair.item;
-    const isChineseLearner = item.languageDirection === 'en-zh';
+    // For Chinese learners (learning Chinese), target (L2) is Chinese.
+    // Based on user rule: en-zh for English learners (L1=zh, L2=en), zh-en for Chinese learners (L1=en, L2=zh)
+    const isChineseLearner = item.languageDirection === 'zh-en';
     const studentAnswer = answerMode === 'voice' ? transcript : typedAnswer;
+    const aiDirection = isChineseLearner 
+      ? (testDirection === 'l1-l2' ? 'en-zh' : 'zh-en')
+      : (testDirection === 'l1-l2' ? 'zh-en' : 'en-zh');
 
     try {
       const result = await evaluateTypedAnswer({
         studentAnswer: studentAnswer,
-        expectedAnswer: testContent.expected,
-        promptShown: testContent.prompt,
-        direction: testDirection === 'auto' ? item.languageDirection : testDirection,
+        expectedAnswer: testContent.rawExpected,
+        promptShown: testContent.rawPrompt,
+        direction: aiDirection,
         learningMode: isChineseLearner ? 'chineseLearner' : 'englishLearner',
         targetExpression: (item as ChunkItem).focusExpression || (item as ReadingItem).title || '',
         pronunciation: (item as ChunkItem).teacherConnections?.pronunciation || (item as ChunkItem).pronunciation,
@@ -220,8 +225,22 @@ export default function RetrievalPractice() {
         if (SpeechRecognition) {
           const recognizer = new SpeechRecognition();
           const currentItem = practiceQueue[currentIndex]?.item;
-          const isChineseTarget = currentItem?.languageDirection === 'en-zh';
-          recognizer.lang = isChineseTarget ? 'zh-TW' : 'en-US';
+          const isChineseLearner = currentItem?.languageDirection === 'zh-en';
+          
+          // Using testDirection directly (l1-l2 or l2-l1)
+          const resolvedDir = testDirection;
+          
+          let lang = 'en-US';
+          if (isChineseLearner) {
+            // L1=en, L2=zh. L1->L2 answer=zh, L2->L1 answer=en
+            lang = resolvedDir === 'l1-l2' ? 'zh-TW' : 'en-US';
+          } else {
+            // L1=zh, L2=en. L1->L2 answer=en, L2->L1 answer=zh
+            lang = resolvedDir === 'l1-l2' ? 'en-US' : 'zh-TW';
+          }
+
+          recognizer.lang = lang;
+          
           recognizer.continuous = true;
           recognizer.interimResults = true;
 
@@ -316,58 +335,74 @@ export default function RetrievalPractice() {
   }
 
   const getFlashcardContent = () => {
-    let en = '';
-    let zh = '';
+    let l1 = ''; // Meaning
+    let l2 = ''; // Target Expression
     if (current.item.itemType === 'reading') {
-      en = (current.item as ReadingItem).title;
-      zh = (current.item as ReadingItem).fullMeaningZh || '';
+      l2 = (current.item as ReadingItem).title;
+      l1 = (current.item as ReadingItem).fullMeaningZh || '';
     } else {
-      en = (current.item as ChunkItem).focusExpression;
-      zh = (current.item as ChunkItem).chunkTranslation;
+      l2 = (current.item as ChunkItem).focusExpression;
+      l1 = (current.item as ChunkItem).chunkTranslation;
     }
 
-    const effectiveDirection = fcDirection === 'auto' ? current.item.languageDirection : fcDirection;
+    const pinyin = (current.item as ChunkItem).teacherConnections?.pronunciation || (current.item as ChunkItem).pronunciation;
+    const isChineseLearner = current.item.languageDirection === 'zh-en';
 
-    if (effectiveDirection === 'en-zh') {
-      return { front: en, back: zh, audioText: en, audioType: 'focusExpression' as const, labelFront: 'English', labelBack: 'Chinese' };
+    const formattedL2 = (isChineseLearner && pinyin) ? (
+      <div style={{ textAlign: 'center' }}>
+        <div style={{ fontSize: '2.5rem', fontWeight: 'bold', color: 'var(--primary)', marginBottom: '0.4rem' }}>{pinyin}</div>
+        <div style={{ fontSize: '1.5rem', color: 'var(--text-muted)' }}>{l2}</div>
+      </div>
+    ) : l2;
+
+    const resolvedDir = fcDirection === 'auto' ? 'l1-l2' : fcDirection;
+
+    if (resolvedDir === 'l1-l2') {
+      return { front: l1, back: formattedL2, audioText: l2, audioType: 'focusExpression' as const, labelFront: 'Meaning (L1)', labelBack: 'Target (L2)' };
     } else {
-      return { front: zh, back: en, audioText: (current.item.languageDirection === 'en-zh' ? en : zh), audioType: 'focusExpression' as const, labelFront: 'Chinese', labelBack: 'English' };
+      return { front: formattedL2, back: l1, audioText: l2, audioType: 'focusExpression' as const, labelFront: 'Target (L2)', labelBack: 'Meaning (L1)' };
     }
   };
 
   const getTestContent = () => {
-    let en = '';
-    let zh = '';
+    let l1 = ''; // Meaning
+    let l2 = ''; // Target Expression
     if (current.item.itemType === 'reading') {
-      en = (current.item as ReadingItem).title;
-      zh = (current.item as ReadingItem).fullMeaningZh || '';
+      l2 = (current.item as ReadingItem).title;
+      l1 = (current.item as ReadingItem).fullMeaningZh || '';
     } else {
-      en = (current.item as ChunkItem).focusExpression;
-      zh = (current.item as ChunkItem).chunkTranslation;
+      l2 = (current.item as ChunkItem).focusExpression;
+      l1 = (current.item as ChunkItem).chunkTranslation;
     }
 
-    const effectiveDirection = testDirection === 'auto' ? current.item.languageDirection : testDirection;
+    const pinyin = (current.item as ChunkItem).teacherConnections?.pronunciation || (current.item as ChunkItem).pronunciation;
+    const isChineseLearner = current.item.languageDirection === 'zh-en';
 
-    if (effectiveDirection === 'en-zh') {
-      const target = (current.item as ChunkItem).focusExpression || (current.item as ReadingItem).title || '';
-      const pinyin = (current.item as ChunkItem).teacherConnections?.pronunciation || (current.item as ChunkItem).pronunciation;
+    const formattedL2 = (isChineseLearner && pinyin) ? (
+      <div style={{ textAlign: 'center' }}>
+        <div style={{ fontSize: '2.2rem', fontWeight: 'bold', color: 'var(--primary)', marginBottom: '0.2rem' }}>{pinyin}</div>
+        <div style={{ fontSize: '1.4rem', color: 'var(--text-muted)' }}>{l2}</div>
+      </div>
+    ) : l2;
 
+    const resolvedDir = testDirection;
+
+    if (resolvedDir === 'l1-l2') {
       return {
-        prompt: (current.item.languageDirection === 'en-zh' ? zh : en),
-        expected: (current.item.languageDirection === 'en-zh' ? en : zh),
-        displayExpected: pinyin ? (
-          <div style={{ textAlign: 'center' }}>
-            <div style={{ fontSize: '1.2rem', color: 'var(--primary)', marginBottom: '0.2rem' }}>{pinyin}</div>
-            <div style={{ fontSize: '1.8rem', fontWeight: 'bold' }}>{target}</div>
-          </div>
-        ) : target,
+        prompt: l1,
+        rawPrompt: l1,
+        expected: l2,
+        rawExpected: l2,
+        displayExpected: formattedL2,
         instruction: 'Produce the target expression'
       };
     } else {
       return {
-        prompt: (current.item.languageDirection === 'en-zh' ? en : zh),
-        expected: (current.item.languageDirection === 'en-zh' ? zh : en),
-        displayExpected: (current.item.languageDirection === 'en-zh' ? zh : en),
+        prompt: formattedL2,
+        rawPrompt: l2,
+        expected: l1,
+        rawExpected: l1,
+        displayExpected: l1,
         instruction: 'How do you say this in the target language?'
       };
     }
@@ -468,7 +503,7 @@ export default function RetrievalPractice() {
             >
               Submit Answer
             </button>
-            <button className="btn btn-outline" style={{ background: '#fff' }} onClick={() => speak(testContent.prompt, current.record)}>🔊 Listen</button>
+            <button className="btn btn-outline" style={{ background: '#fff' }} onClick={() => speak(testContent.rawPrompt, current.record)}>🔊 Listen</button>
           </div>
         </div>
       );
@@ -525,18 +560,18 @@ export default function RetrievalPractice() {
               Auto
             </button>
             <button
-              className={`btn ${fcDirection === 'en-zh' ? 'btn-primary' : 'btn-outline'}`}
+              className={`btn ${fcDirection === 'l1-l2' ? 'btn-primary' : 'btn-outline'}`}
               style={{ padding: '0.5rem 1rem', fontSize: '0.9rem' }}
-              onClick={() => setFcDirection('en-zh')}
+              onClick={() => setFcDirection('l1-l2')}
             >
-              EN → ZH
+              L1 → L2
             </button>
             <button
-              className={`btn ${fcDirection === 'zh-en' ? 'btn-primary' : 'btn-outline'}`}
+              className={`btn ${fcDirection === 'l2-l1' ? 'btn-primary' : 'btn-outline'}`}
               style={{ padding: '0.5rem 1rem', fontSize: '0.9rem' }}
-              onClick={() => setFcDirection('zh-en')}
+              onClick={() => setFcDirection('l2-l1')}
             >
-              ZH → EN
+              L2 → L1
             </button>
           </div>
 
@@ -546,14 +581,14 @@ export default function RetrievalPractice() {
                 <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: '2rem', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
                   {fcContent.labelFront}
                 </p>
-                <div style={{ fontSize: '2.5rem', fontWeight: 'bold' }}>{fcContent.front}</div>
+                <div style={{ fontSize: '2.5rem', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100px' }}>{fcContent.front}</div>
                 <p style={{ marginTop: '2rem', color: 'var(--primary)', fontSize: '0.9rem' }}>Click to flip</p>
               </div>
               <div className="flip-card-back">
                 <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: '2rem', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
                   {fcContent.labelBack}
                 </p>
-                <div style={{ fontSize: '2rem', color: 'var(--text-main)' }}>{fcContent.back}</div>
+                <div style={{ fontSize: '2rem', color: 'var(--text-main)', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100px' }}>{fcContent.back}</div>
                 <div style={{ marginTop: '3rem', display: 'flex', gap: '1rem' }}>
                   <button
                     className="btn btn-outline"
@@ -575,19 +610,27 @@ export default function RetrievalPractice() {
         </div>
       ) : (
         <div style={{ textAlign: 'center' }}>
-          <div style={{ marginBottom: '2rem', background: '#f8fafc', padding: '1.25rem', borderRadius: '16px', border: '1px solid var(--border)' }}>
-            <div style={{ marginBottom: '1rem' }}>
+          <div style={{ marginBottom: '2rem', background: '#f8fafc', padding: '1.25rem', borderRadius: '16px', border: '1px solid var(--border)', display: 'flex', flexWrap: 'wrap', gap: '1.5rem', justifyContent: 'center', alignItems: 'flex-end' }}>
+            <div style={{ flex: '1', minWidth: '150px' }}>
               <p style={{ margin: '0 0 0.5rem', fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Direction</p>
-              <div style={{ display: 'flex', justifyContent: 'center', gap: '0.5rem' }}>
+              <div style={{ display: 'flex', background: '#e2e8f0', padding: '0.2rem', borderRadius: '8px' }}>
                 {[
-                  { id: 'auto', label: 'Auto' },
-                  { id: 'en-zh', label: 'English → Chinese' },
-                  { id: 'zh-en', label: 'Chinese → English' }
+                  { id: 'l1-l2', label: 'L1 → L2' },
+                  { id: 'l2-l1', label: 'L2 → L1' }
                 ].map(d => (
                   <button
                     key={d.id}
-                    className={`btn ${testDirection === d.id ? 'btn-primary' : 'btn-outline'}`}
-                    style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', background: testDirection === d.id ? '' : '#fff' }}
+                    className="btn"
+                    style={{
+                      flex: '1',
+                      padding: '0.4rem 0.8rem',
+                      fontSize: '0.8rem',
+                      border: 'none',
+                      background: testDirection === d.id ? '#fff' : 'transparent',
+                      color: testDirection === d.id ? 'var(--primary)' : 'var(--text-muted)',
+                      boxShadow: testDirection === d.id ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                      fontWeight: testDirection === d.id ? 'bold' : 'normal'
+                    }}
                     onClick={() => setTestDirection(d.id as any)}
                   >
                     {d.label}
@@ -595,14 +638,24 @@ export default function RetrievalPractice() {
                 ))}
               </div>
             </div>
-            <div>
+
+            <div style={{ flex: '1', minWidth: '150px' }}>
               <p style={{ margin: '0 0 0.5rem', fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Answer Mode</p>
-              <div style={{ display: 'flex', justifyContent: 'center', gap: '0.5rem' }}>
+              <div style={{ display: 'flex', background: '#e2e8f0', padding: '0.2rem', borderRadius: '8px' }}>
                 {['voice', 'type'].map(m => (
                   <button
                     key={m}
-                    className={`btn ${answerMode === m ? 'btn-primary' : 'btn-outline'}`}
-                    style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', background: answerMode === m ? '' : '#fff' }}
+                    className="btn"
+                    style={{
+                      flex: '1',
+                      padding: '0.4rem 0.8rem',
+                      fontSize: '0.8rem',
+                      border: 'none',
+                      background: answerMode === m ? '#fff' : 'transparent',
+                      color: answerMode === m ? 'var(--primary)' : 'var(--text-muted)',
+                      boxShadow: answerMode === m ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                      fontWeight: answerMode === m ? 'bold' : 'normal'
+                    }}
                     onClick={() => {
                       setAnswerMode(m as any);
                       setValidationError(null);
