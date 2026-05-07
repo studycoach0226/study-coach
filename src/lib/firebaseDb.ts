@@ -9,7 +9,7 @@ import {
   deleteDoc,
   serverTimestamp
 } from 'firebase/firestore';
-import { ref, uploadString, getDownloadURL } from 'firebase/storage';
+import { ref, uploadString, getDownloadURL, listAll, deleteObject } from 'firebase/storage';
 import { firestore, storage } from './firebase';
 import { ChunkRecord, ChunkItem } from './learning-schema/types';
 
@@ -113,10 +113,26 @@ export async function getStudentFlashcards(studentId: string) {
 
 export async function deleteFlashcardFromCloud(studentId: string, learningItemId: string) {
   try {
+    // 1. Delete Firestore document
     const docId = `${studentId}_${learningItemId}`;
     const docRef = doc(firestore, 'learningRecords', docId);
     await deleteDoc(docRef);
-    console.log(`[DEBUG] Cloud delete success for: ${docId}`);
+    console.log(`[DEBUG] Cloud Firestore delete success for: ${docId}`);
+
+    // 2. Delete all related Storage audio files (studentAudio/{studentId}/{wordId}/*)
+    try {
+      const folderPath = `studentAudio/${studentId}/${learningItemId}`;
+      const folderRef = ref(storage, folderPath);
+      const listResult = await listAll(folderRef);
+      
+      const deletePromises = listResult.items.map(itemRef => deleteObject(itemRef));
+      await Promise.all(deletePromises);
+      
+      console.log(`[DEBUG] Storage cleanup success for: ${folderPath} (${listResult.items.length} files)`);
+    } catch (storageError) {
+      // Requirement: If Storage delete fails, do NOT block flashcard deletion.
+      console.warn('[DEBUG] Storage cleanup failed (non-blocking):', storageError);
+    }
   } catch (error) {
     console.error('Error deleting flashcard from Firestore:', error);
   }
