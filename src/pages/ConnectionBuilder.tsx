@@ -1,6 +1,4 @@
 import { useState, useEffect, useRef } from 'react';
-import { ref, deleteObject } from 'firebase/storage';
-import { storage } from '../lib/firebase';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { db } from '../lib/db';
 import { LearningItem, StudentLearningRecord, ConnectionFields, ChunkItem, ChunkRecord } from '../lib/types';
@@ -53,9 +51,10 @@ export default function ConnectionBuilder() {
   const [saveError, setSaveError] = useState<string | null>(null);
 
 
-  // Auto-Upload State (Pronunciation)
-  const [autoUploadStatus, setAutoUploadStatus] = useState<string>('');
+  // Audio State (Unified)
   const [autoUploadMetadata, setAutoUploadMetadata] = useState<MediaMetadata | null>(null);
+  const [sentenceUploadMetadata, setSentenceUploadMetadata] = useState<MediaMetadata | null>(null);
+  const [audioFiles, setAudioFiles] = useState<{ targetAudio?: MediaMetadata; chunkAudio?: MediaMetadata }>({});
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -69,6 +68,7 @@ export default function ConnectionBuilder() {
     setEditableSentenceMeaning('');
     setConnections({});
     setAudioUrls({});
+    setAudioFiles({});
     setErrorCode(null);
     setErrorMessage(null);
     setSaveError(null);
@@ -136,6 +136,13 @@ export default function ConnectionBuilder() {
         const currentConns = chunkRecord.studentConnections || {};
         setConnections(currentConns);
         setAudioUrls(chunkRecord.audioUrls || {});
+        // Initialize audioFiles from record if present
+        const recordAudioFiles = (chunkRecord as any).audioFiles || {};
+        setAudioFiles(recordAudioFiles);
+        // Sync to auto-upload metadata states for UI feedback
+        if (recordAudioFiles.targetAudio) setAutoUploadMetadata(recordAudioFiles.targetAudio);
+        if (recordAudioFiles.chunkAudio) setSentenceUploadMetadata(recordAudioFiles.chunkAudio);
+
         setEditableChunk(currentConns.customChunk || chunkItem.chunk);
         setEditableTranslation(currentConns.customTranslation || chunkItem.chunkTranslation);
         setEditableFocusExpression(currentConns.customFocusExpression || chunkItem.focusExpression || '');
@@ -155,14 +162,19 @@ export default function ConnectionBuilder() {
   }, [wordIdParam]);
 
   const playAudio = (type: 'focusExpression' | 'chunk') => {
-    const studentUrl = type === 'focusExpression' ? (audioUrls.focusExpression || audioUrls.word) : audioUrls.chunk;
+    let url = type === 'focusExpression' ? (audioUrls.focusExpression || audioUrls.word) : audioUrls.chunk;
+    
+    // Check unified audioFiles for both types
+    if (type === 'focusExpression' && audioFiles.targetAudio?.url) {
+      url = audioFiles.targetAudio.url;
+    } else if (type === 'chunk' && audioFiles.chunkAudio?.url) {
+      url = audioFiles.chunkAudio.url;
+    }
+
     const text = type === 'focusExpression' ? editableFocusExpression : editableChunk;
-    playUnifiedAudio(text, studentUrl);
+    playUnifiedAudio(text, url);
   };
 
-  const handleAudioSave = (type: 'focusExpression' | 'chunk', base64: string) => {
-    setAudioUrls(prev => ({ ...prev, [type]: base64 }));
-  };
 
   const handleConnectionChange = (field: keyof ConnectionFields, value: string) => {
     setConnections(prev => ({ ...prev, [field]: value }));
@@ -186,7 +198,7 @@ export default function ConnectionBuilder() {
     setIsSaving(true);
     setSaveError(null);
 
-    const hasChunkAudio = !!(audioUrls.focusExpression || audioUrls.word);
+    const hasTargetAudio = !!audioFiles.targetAudio?.url || !!(audioUrls.focusExpression || audioUrls.word);
 
     // Explicit array of strictly tracked 'Encoding Connections'
     const validConnectionFields = [
@@ -203,8 +215,8 @@ export default function ConnectionBuilder() {
     const connectionCount = validConnectionFields.filter(v => !!v && v.trim() !== '').length;
 
     let isValid = true;
-    if (!hasChunkAudio) {
-      setSaveError('Please record audio for the Chunk (Primary).');
+    if (!hasTargetAudio) {
+      setSaveError('Please record audio for the Target Expression.');
       isValid = false;
     } else if (connectionCount < 2) {
       setSaveError('Please complete at least 2 encoding connections (Text or Visual).');
@@ -223,13 +235,14 @@ export default function ConnectionBuilder() {
       sentenceMeaning: editableSentenceMeaning !== (chunkItem.sentenceMeaning || '') ? editableSentenceMeaning : undefined,
     };
 
-    const updatedRecord: StudentLearningRecord = {
+    const updatedRecord: any = {
       ...chunkRecord,
       studentConnections: nextStudentConnections,
       audioUrls,
+      audioFiles,
       encodingCompleted: isValid,
       updatedAt: Date.now()
-    } as ChunkRecord;
+    };
 
     const updatedItem: LearningItem = {
       ...chunkItem,
@@ -254,9 +267,8 @@ export default function ConnectionBuilder() {
   };
 
 
-  const handleAutoUpload = async (base64: string) => {
+  const handleAutoUpload = async (base64: string, type: 'targetAudio' | 'chunkAudio' = 'targetAudio') => {
     if (!currentItem || !studentId) return;
-    setAutoUploadStatus('Uploading Recording...');
     
     try {
       // 1. Convert base64 to File
@@ -268,38 +280,24 @@ export default function ConnectionBuilder() {
       while (n--) {
         u8arr[n] = bstr.charCodeAt(n);
       }
-      const file = new File([u8arr], 'student-pronunciation.webm', { type: mime });
+      const filename = type === 'targetAudio' ? 'student-pronunciation.webm' : 'sentence-context.webm';
+      const file = new File([u8arr], filename, { type: mime });
 
       // 2. Upload
-      const path = `studentAudio/${studentId}/${currentItem.id}/student-pronunciation.webm`;
+      const path = `studentAudio/${studentId}/${currentItem.id}/${filename}`;
       const metadata = await uploadAudioFile(file, path);
       
       // 3. Update local state
-      setAutoUploadMetadata(metadata);
-      setAutoUploadStatus('Auto-Upload Success!');
-      console.log('[DEBUG] Auto-Upload Metadata:', metadata);
+      setAudioFiles(prev => ({ ...prev, [type]: metadata }));
+      if (type === 'targetAudio') setAutoUploadMetadata(metadata);
+      if (type === 'chunkAudio') setSentenceUploadMetadata(metadata);
+      
+      console.log(`[DEBUG] Auto-Upload Metadata (${type}):`, metadata);
     } catch (err) {
-      console.error('Auto-upload failed:', err);
-      setAutoUploadStatus('Auto-Upload Failed');
+      console.error(`Auto-upload failed (${type}):`, err);
     }
   };
 
-  const handleDeleteAudio = async () => {
-    if (!autoUploadMetadata || !autoUploadMetadata.path) return;
-    setAutoUploadStatus('Deleting uploaded audio...');
-    
-    try {
-      const storageRef = ref(storage, autoUploadMetadata.path);
-      await deleteObject(storageRef);
-      
-      setAutoUploadMetadata(null);
-      setAutoUploadStatus('Uploaded audio deleted');
-      console.log('[DEBUG] Storage file deleted:', autoUploadMetadata.path);
-    } catch (err) {
-      console.error('Delete failed:', err);
-      setAutoUploadStatus(`Delete failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
-    }
-  };
 
   // 1. Loading State
   if (status === 'loading') {
@@ -422,37 +420,15 @@ export default function ConnectionBuilder() {
               )}
             </div>
 
-            {/* Student Pronunciation Recording (Auto-Upload) */}
+            {/* Student Target Expression Audio Recording (Unified) */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', background: '#f5f3ff', padding: '1rem', borderRadius: '12px', border: '1px solid #ddd6fe' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <label style={{ fontWeight: 'bold', fontSize: '0.9rem', color: '#6d28d9' }}>🎙 Student Pronunciation Recording</label>
+                <label style={{ fontWeight: 'bold', fontSize: '0.9rem', color: '#6d28d9' }}>🎙 Target Expression Audio Recording</label>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                   {autoUploadMetadata && (
-                     <button 
-                       onClick={handleDeleteAudio} 
-                       className="btn btn-outline" 
-                       style={{ background: '#fee2e2', color: '#dc2626', borderColor: '#fca5a5', padding: '0.2rem 0.5rem', fontSize: '0.8rem' }}
-                     >
-                       🗑 Remove
-                     </button>
-                   )}
                    {autoUploadMetadata && <span style={{ fontSize: '0.8rem', color: 'var(--success)' }}>✓ Uploaded</span>}
                    <AudioRecorder onSave={handleAutoUpload} />
                 </div>
               </div>
-              
-              {/* Auto-Upload Debug UI */}
-              {autoUploadStatus && (
-                <div style={{ fontSize: '0.8rem', marginTop: '0.5rem', color: autoUploadStatus.includes('Success') ? 'var(--success)' : (autoUploadStatus.includes('Failed') ? 'var(--danger)' : 'var(--primary)') }}>
-                  {autoUploadStatus}
-                </div>
-              )}
-              {autoUploadMetadata && (
-                <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', background: '#fff', padding: '0.5rem', borderRadius: '6px', marginTop: '0.5rem', border: '1px solid #ddd6fe' }}>
-                  <p style={{ margin: '0 0 0.2rem 0', wordBreak: 'break-all' }}><strong>URL:</strong> {autoUploadMetadata.url}</p>
-                  <p style={{ margin: 0 }}><strong>Path:</strong> {autoUploadMetadata.path}</p>
-                </div>
-              )}
             </div>
 
             {/* Target Expression Section */}
@@ -460,11 +436,10 @@ export default function ConnectionBuilder() {
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
                 <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Target Expression <span style={{ color: 'var(--danger)' }}>*</span></label>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  {(audioUrls.focusExpression || audioUrls.word) && <span style={{ fontSize: '0.8rem', color: 'var(--success)' }}>✓ Recorded</span>}
+                  {(audioFiles.targetAudio?.url || audioUrls.focusExpression || audioUrls.word) && <span style={{ fontSize: '0.8rem', color: 'var(--success)' }}>✓ Audio Ready</span>}
                   <button className="btn btn-outline" style={{ borderRadius: '50%', width: '32px', height: '32px', padding: 0, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => playAudio('focusExpression')}>
-                    {(audioUrls.focusExpression || audioUrls.word) ? '▶️' : '🔊'}
+                    {(audioFiles.targetAudio?.url || audioUrls.focusExpression || audioUrls.word) ? '▶️' : '🔊'}
                   </button>
-                  <AudioRecorder customAudio={audioUrls.focusExpression || audioUrls.word} onSave={(base64) => handleAudioSave('focusExpression', base64)} />
                 </div>
               </div>
               {isEditingFocus ? (
@@ -514,11 +489,11 @@ export default function ConnectionBuilder() {
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
                   <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Sentence / Context <span style={{ fontWeight: 'normal', color: 'var(--text-muted)' }}>(Optional Audio)</span></label>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    {audioUrls.chunk && <span style={{ fontSize: '0.8rem', color: 'var(--success)' }}>✓ Recorded</span>}
+                    {(sentenceUploadMetadata?.url || audioUrls.chunk) && <span style={{ fontSize: '0.8rem', color: 'var(--success)' }}>✓ Audio Ready</span>}
                     <button className="btn btn-outline" style={{ borderRadius: '50%', width: '32px', height: '32px', padding: 0, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => playAudio('chunk')}>
-                      {audioUrls.chunk ? '▶️' : '🔊'}
+                      {(sentenceUploadMetadata?.url || audioUrls.chunk) ? '▶️' : '🔊'}
                     </button>
-                    <AudioRecorder customAudio={audioUrls.chunk} onSave={(base64) => handleAudioSave('chunk', base64)} />
+                    <AudioRecorder onSave={(base64) => handleAutoUpload(base64, 'chunkAudio')} />
                   </div>
                 </div>
                 {isEditingChunk ? (
