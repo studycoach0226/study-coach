@@ -4,6 +4,7 @@ import { db } from '../lib/db';
 import { LearningItem, StudentLearningRecord, ReadingItem, ChunkItem } from '../lib/types';
 import { fetchAllReadingArticles, fetchAssignmentsByStudentId } from '../lib/readingContent';
 import { fetchStudentById } from '../lib/studentContent';
+import { deleteFlashcardFromCloud } from '../lib/firebaseDb';
 
 type AssignedReadingTask = {
   assignmentId: string;
@@ -156,6 +157,10 @@ export default function StudentDashboard() {
 
   const handleDeleteCard = (recordId: string) => {
     if (window.confirm("Delete this card?\nThis will remove it from your library.")) {
+      const pair = items.find(p => p.record.id === recordId);
+      if (pair) {
+        deleteFlashcardFromCloud(pair.record.studentId, pair.record.learningItemId).catch(() => {});
+      }
       db.deleteLearningRecord(recordId);
       setItems(prev => prev.filter(p => p.record.id !== recordId));
     }

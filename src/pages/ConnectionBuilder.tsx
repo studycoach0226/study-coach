@@ -4,6 +4,7 @@ import { db } from '../lib/db';
 import { LearningItem, StudentLearningRecord, ConnectionFields, ChunkItem, ChunkRecord } from '../lib/types';
 import AudioRecorder from '../components/AudioRecorder';
 import { playUnifiedAudio } from '../lib/audioUtils';
+import { saveFlashcard } from '../lib/firebaseDb';
 
 type LoadingStatus = 'idle' | 'loading' | 'error' | 'ready';
 
@@ -232,6 +233,11 @@ export default function ConnectionBuilder() {
 
     db.saveLearningRecord(updatedRecord);
     db.updateLearningItem(updatedItem);
+
+    // Write-only sync to Firebase (non-blocking)
+    saveFlashcard(updatedRecord, updatedItem).catch(err => {
+      console.warn('[DEBUG] Firebase sync failed, but local save succeeded:', err);
+    });
     
     setCurrentRecord(updatedRecord);
     setCurrentItem(updatedItem);

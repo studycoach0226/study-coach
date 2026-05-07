@@ -1,4 +1,3 @@
-// src/lib/firebaseDb.ts
 import {
   collection,
   updateDoc,
@@ -7,6 +6,7 @@ import {
   getDocs,
   doc,
   setDoc,
+  deleteDoc,
   serverTimestamp
 } from 'firebase/firestore';
 import { ref, uploadString, getDownloadURL } from 'firebase/storage';
@@ -108,6 +108,17 @@ export async function getStudentFlashcards(studentId: string) {
   } catch (error) {
     console.error('Error fetching flashcards from Firestore:', error);
     throw error;
+  }
+}
+
+export async function deleteFlashcardFromCloud(studentId: string, learningItemId: string) {
+  try {
+    const docId = `${studentId}_${learningItemId}`;
+    const docRef = doc(firestore, 'learningRecords', docId);
+    await deleteDoc(docRef);
+    console.log(`[DEBUG] Cloud delete success for: ${docId}`);
+  } catch (error) {
+    console.error('Error deleting flashcard from Firestore:', error);
   }
 }
 

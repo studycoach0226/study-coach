@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { db } from '../lib/db';
 import { LearningItem, StudentLearningRecord, ChunkItem } from '../lib/types';
 import { fetchAssignmentsByStudentId } from '../lib/readingContent';
+import { deleteFlashcardFromCloud } from '../lib/firebaseDb';
 
 type AssignedReadingTask = {
   assignmentId: string;
@@ -187,6 +188,10 @@ export default function FlashcardLibrary() {
 
   const handleDeleteCard = (recordId: string) => {
     if (window.confirm('Delete this card?\nThis will remove it from your library.')) {
+      const pair = items.find(p => p.record.id === recordId);
+      if (pair) {
+        deleteFlashcardFromCloud(pair.record.studentId, pair.record.learningItemId).catch(() => {});
+      }
       db.deleteLearningRecord(recordId);
       setItems(prev => prev.filter(p => p.record.id !== recordId));
     }
