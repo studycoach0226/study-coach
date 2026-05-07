@@ -5,7 +5,8 @@ import { LearningItem, StudentLearningRecord, ConnectionFields, ChunkItem, Chunk
 import AudioRecorder from '../components/AudioRecorder';
 import { playUnifiedAudio } from '../lib/audioUtils';
 import { saveFlashcard } from '../lib/firebaseDb';
-import { getActiveEncodingFields } from '../config/encodingSchema';
+import { getActiveEncodingFields, MediaMetadata } from '../config/encodingSchema';
+import { uploadAudioFile } from '../lib/storageUtils';
 
 type LoadingStatus = 'idle' | 'loading' | 'error' | 'ready';
 
@@ -48,6 +49,11 @@ export default function ConnectionBuilder() {
   const [audioUrls, setAudioUrls] = useState<{ word?: string; chunk?: string; focusExpression?: string }>({});
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+
+  // Storage Test State
+  const [testUploadFile, setTestUploadFile] = useState<File | null>(null);
+  const [testUploadStatus, setTestUploadStatus] = useState<string>('');
+  const [testMetadata, setTestMetadata] = useState<MediaMetadata | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -243,6 +249,21 @@ export default function ConnectionBuilder() {
     setCurrentRecord(updatedRecord);
     setCurrentItem(updatedItem);
     setIsSaving(false);
+  };
+
+  const handleTestUpload = async () => {
+    if (!testUploadFile || !currentItem) return;
+    setTestUploadStatus('Uploading...');
+    try {
+      const path = `studentAudio/${studentId}/${currentItem.id}/student-pronunciation.webm`;
+      const metadata = await uploadAudioFile(testUploadFile, path);
+      setTestMetadata(metadata);
+      setTestUploadStatus('Upload Success!');
+      console.log('[DEBUG] Upload Metadata:', metadata);
+    } catch (err) {
+      console.error('Upload failed:', err);
+      setTestUploadStatus('Upload Failed');
+    }
   };
 
   // 1. Loading State
@@ -573,6 +594,45 @@ export default function ConnectionBuilder() {
                 <div style={{ fontSize: '0.7rem', color: 'var(--primary)', marginTop: '0.5rem', fontFamily: 'monospace' }}>{field.firestorePath}</div>
               </div>
             ))}
+          </div>
+        </section>
+
+        {/* Student Pronunciation Upload Test (Temporary Verification) */}
+        <section style={{ marginTop: '0.5rem', padding: '2rem', background: '#f5f3ff', border: '2px dashed #8b5cf6', borderRadius: '16px' }}>
+          <h3 style={{ margin: '0 0 1rem 0', color: '#6d28d9' }}>
+            🧪 Student Pronunciation Upload Test
+          </h3>
+          <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem', fontSize: '0.9rem' }}>
+            Manually verify Firebase Storage connectivity by selecting an audio file.
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <input 
+              type="file" 
+              accept="audio/*" 
+              onChange={(e) => setTestUploadFile(e.target.files?.[0] || null)}
+              style={{ padding: '0.5rem', background: '#fff', borderRadius: '8px', border: '1px solid var(--border)' }}
+            />
+            <button 
+              className="btn btn-primary" 
+              onClick={handleTestUpload}
+              disabled={!testUploadFile || testUploadStatus === 'Uploading...'}
+              style={{ background: '#7c3aed', borderColor: '#7c3aed' }}
+            >
+              {testUploadStatus === 'Uploading...' ? 'Uploading...' : 'Test Upload to Storage'}
+            </button>
+            
+            {testUploadStatus && (
+              <div style={{ marginTop: '0.5rem', fontWeight: 'bold', color: testUploadStatus.includes('Success') ? 'var(--success)' : 'var(--danger)' }}>
+                {testUploadStatus}
+              </div>
+            )}
+
+            {testMetadata && (
+              <div style={{ marginTop: '1rem', background: '#fff', padding: '1rem', borderRadius: '8px', border: '1px solid var(--border)', fontSize: '0.8rem' }}>
+                <p style={{ margin: '0 0 0.5rem 0' }}><strong>Download URL:</strong> <a href={testMetadata.url} target="_blank" rel="noreferrer" style={{ wordBreak: 'break-all' }}>{testMetadata.url}</a></p>
+                <p style={{ margin: 0 }}><strong>Storage Path:</strong> <code>{testMetadata.path}</code></p>
+              </div>
+            )}
           </div>
         </section>
 
