@@ -5,6 +5,7 @@ import { LearningItem, StudentLearningRecord, ConnectionFields, ChunkItem, Chunk
 import AudioRecorder from '../components/AudioRecorder';
 import { playUnifiedAudio } from '../lib/audioUtils';
 import { saveFlashcard } from '../lib/firebaseDb';
+import { getActiveEncodingFields } from '../config/encodingSchema';
 
 type LoadingStatus = 'idle' | 'loading' | 'error' | 'ready';
 
@@ -554,6 +555,25 @@ export default function ConnectionBuilder() {
             onChange={e => handleConnectionChange('personalSentence', e.target.value)}
             placeholder="Type your sentence here..."
           />
+        </section>
+
+        {/* Media Schema Preview Section (Temporary Verification) */}
+        <section style={{ marginTop: '2rem', padding: '2rem', background: '#f8fafc', border: '2px dashed var(--border)', borderRadius: '16px' }}>
+          <h3 style={{ margin: '0 0 1rem 0', color: 'var(--text-main)' }}>
+            🧪 Media Schema Preview (v1)
+          </h3>
+          <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem' }}>
+            Verifying dynamic field discovery from <code>encodingSchema.ts</code>.
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
+            {getActiveEncodingFields().filter(f => f.section === 'media').map(field => (
+              <div key={field.fieldKey} style={{ background: '#fff', padding: '1rem', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                <div style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>{field.label}</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>Type: {field.type}</div>
+                <div style={{ fontSize: '0.7rem', color: 'var(--primary)', marginTop: '0.5rem', fontFamily: 'monospace' }}>{field.firestorePath}</div>
+              </div>
+            ))}
+          </div>
         </section>
 
         {/* Save Button & Validation Feedback */}

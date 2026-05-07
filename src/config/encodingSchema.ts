@@ -143,13 +143,40 @@ export const ENCODING_SCHEMA: EncodingField[] = [
 
   // --- MEDIA SECTION ---
   {
+    fieldKey: 'target_audio_v1',
+    label: 'Target Expression Audio',
+    type: 'audio',
+    section: 'media',
+    isActive: true,
+    required: false,
+    firestorePath: 'audioFiles.targetAudio'
+  },
+  {
+    fieldKey: 'chunk_audio_v1',
+    label: 'Sentence / Chunk Audio',
+    type: 'audio',
+    section: 'media',
+    isActive: true,
+    required: false,
+    firestorePath: 'audioFiles.chunkAudio'
+  },
+  {
+    fieldKey: 'student_pronunciation_audio_v1',
+    label: 'Student Pronunciation Audio',
+    type: 'audio',
+    section: 'media',
+    isActive: true,
+    required: true,
+    firestorePath: 'audioFiles.studentPronunciationAudio'
+  },
+  {
     fieldKey: 'memory_image_v1',
     label: 'Memory Image',
     type: 'image',
     section: 'media',
     isActive: true,
     required: false,
-    firestorePath: 'imageUrl'
+    firestorePath: 'imageFiles.memoryImage'
   },
   {
     fieldKey: 'image_note_v1',
