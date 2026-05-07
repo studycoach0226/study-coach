@@ -52,7 +52,6 @@ export default function ConnectionBuilder() {
 
 
   // Audio State (Unified)
-  const [autoUploadMetadata, setAutoUploadMetadata] = useState<MediaMetadata | null>(null);
   const [sentenceUploadMetadata, setSentenceUploadMetadata] = useState<MediaMetadata | null>(null);
   const [audioFiles, setAudioFiles] = useState<{ targetAudio?: MediaMetadata; chunkAudio?: MediaMetadata }>({});
 
@@ -140,7 +139,6 @@ export default function ConnectionBuilder() {
         const recordAudioFiles = (chunkRecord as any).audioFiles || {};
         setAudioFiles(recordAudioFiles);
         // Sync to auto-upload metadata states for UI feedback
-        if (recordAudioFiles.targetAudio) setAutoUploadMetadata(recordAudioFiles.targetAudio);
         if (recordAudioFiles.chunkAudio) setSentenceUploadMetadata(recordAudioFiles.chunkAudio);
 
         setEditableChunk(currentConns.customChunk || chunkItem.chunk);
@@ -289,7 +287,6 @@ export default function ConnectionBuilder() {
       
       // 3. Update local state
       setAudioFiles(prev => ({ ...prev, [type]: metadata }));
-      if (type === 'targetAudio') setAutoUploadMetadata(metadata);
       if (type === 'chunkAudio') setSentenceUploadMetadata(metadata);
       
       console.log(`[DEBUG] Auto-Upload Metadata (${type}):`, metadata);
@@ -420,17 +417,6 @@ export default function ConnectionBuilder() {
               )}
             </div>
 
-            {/* Student Target Expression Audio Recording (Unified) */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', background: '#f5f3ff', padding: '1rem', borderRadius: '12px', border: '1px solid #ddd6fe' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <label style={{ fontWeight: 'bold', fontSize: '0.9rem', color: '#6d28d9' }}>🎙 Target Expression Audio Recording</label>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                   {autoUploadMetadata && <span style={{ fontSize: '0.8rem', color: 'var(--success)' }}>✓ Uploaded</span>}
-                   <AudioRecorder onSave={handleAutoUpload} />
-                </div>
-              </div>
-            </div>
-
             {/* Target Expression Section */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
@@ -440,6 +426,7 @@ export default function ConnectionBuilder() {
                   <button className="btn btn-outline" style={{ borderRadius: '50%', width: '32px', height: '32px', padding: 0, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => playAudio('focusExpression')}>
                     {(audioFiles.targetAudio?.url || audioUrls.focusExpression || audioUrls.word) ? '▶️' : '🔊'}
                   </button>
+                  <AudioRecorder onSave={(base64) => handleAutoUpload(base64, 'targetAudio')} />
                 </div>
               </div>
               {isEditingFocus ? (
