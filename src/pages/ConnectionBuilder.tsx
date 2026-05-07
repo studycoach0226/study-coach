@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
+import { ref, deleteObject } from 'firebase/storage';
+import { storage } from '../lib/firebase';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { db } from '../lib/db';
 import { LearningItem, StudentLearningRecord, ConnectionFields, ChunkItem, ChunkRecord } from '../lib/types';
@@ -50,10 +52,10 @@ export default function ConnectionBuilder() {
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  // Storage Test State
-  const [testUploadFile, setTestUploadFile] = useState<File | null>(null);
-  const [testUploadStatus, setTestUploadStatus] = useState<string>('');
-  const [testMetadata, setTestMetadata] = useState<MediaMetadata | null>(null);
+
+  // Auto-Upload State (Pronunciation)
+  const [autoUploadStatus, setAutoUploadStatus] = useState<string>('');
+  const [autoUploadMetadata, setAutoUploadMetadata] = useState<MediaMetadata | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -251,18 +253,51 @@ export default function ConnectionBuilder() {
     setIsSaving(false);
   };
 
-  const handleTestUpload = async () => {
-    if (!testUploadFile || !currentItem) return;
-    setTestUploadStatus('Uploading...');
+
+  const handleAutoUpload = async (base64: string) => {
+    if (!currentItem || !studentId) return;
+    setAutoUploadStatus('Uploading Recording...');
+    
     try {
+      // 1. Convert base64 to File
+      const arr = base64.split(',');
+      const mime = arr[0].match(/:(.*?);/)?.[1] || 'audio/webm';
+      const bstr = atob(arr[1]);
+      let n = bstr.length;
+      const u8arr = new Uint8Array(n);
+      while (n--) {
+        u8arr[n] = bstr.charCodeAt(n);
+      }
+      const file = new File([u8arr], 'student-pronunciation.webm', { type: mime });
+
+      // 2. Upload
       const path = `studentAudio/${studentId}/${currentItem.id}/student-pronunciation.webm`;
-      const metadata = await uploadAudioFile(testUploadFile, path);
-      setTestMetadata(metadata);
-      setTestUploadStatus('Upload Success!');
-      console.log('[DEBUG] Upload Metadata:', metadata);
+      const metadata = await uploadAudioFile(file, path);
+      
+      // 3. Update local state
+      setAutoUploadMetadata(metadata);
+      setAutoUploadStatus('Auto-Upload Success!');
+      console.log('[DEBUG] Auto-Upload Metadata:', metadata);
     } catch (err) {
-      console.error('Upload failed:', err);
-      setTestUploadStatus('Upload Failed');
+      console.error('Auto-upload failed:', err);
+      setAutoUploadStatus('Auto-Upload Failed');
+    }
+  };
+
+  const handleDeleteAudio = async () => {
+    if (!autoUploadMetadata || !autoUploadMetadata.path) return;
+    setAutoUploadStatus('Deleting uploaded audio...');
+    
+    try {
+      const storageRef = ref(storage, autoUploadMetadata.path);
+      await deleteObject(storageRef);
+      
+      setAutoUploadMetadata(null);
+      setAutoUploadStatus('Uploaded audio deleted');
+      console.log('[DEBUG] Storage file deleted:', autoUploadMetadata.path);
+    } catch (err) {
+      console.error('Delete failed:', err);
+      setAutoUploadStatus(`Delete failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
   };
 
@@ -383,6 +418,39 @@ export default function ConnectionBuilder() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: '#f8fafc', padding: '0.75rem 1rem', borderRadius: '8px', border: '1px solid transparent', cursor: 'text' }} onClick={() => setIsEditingPronunciation(true)}>
                   <span style={{ fontSize: '1.2rem', color: editablePronunciation ? 'var(--text-main)' : 'var(--text-muted)', flex: 1 }}>{editablePronunciation || 'Enter pronunciation...'}</span>
                   <button className="btn btn-outline" style={{ padding: '0.2rem 0.5rem', fontSize: '0.8rem', background: '#fff', border: 'none', color: 'var(--text-muted)' }}>✏️</button>
+                </div>
+              )}
+            </div>
+
+            {/* Student Pronunciation Recording (Auto-Upload) */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', background: '#f5f3ff', padding: '1rem', borderRadius: '12px', border: '1px solid #ddd6fe' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <label style={{ fontWeight: 'bold', fontSize: '0.9rem', color: '#6d28d9' }}>🎙 Student Pronunciation Recording</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                   {autoUploadMetadata && (
+                     <button 
+                       onClick={handleDeleteAudio} 
+                       className="btn btn-outline" 
+                       style={{ background: '#fee2e2', color: '#dc2626', borderColor: '#fca5a5', padding: '0.2rem 0.5rem', fontSize: '0.8rem' }}
+                     >
+                       🗑 Remove
+                     </button>
+                   )}
+                   {autoUploadMetadata && <span style={{ fontSize: '0.8rem', color: 'var(--success)' }}>✓ Uploaded</span>}
+                   <AudioRecorder onSave={handleAutoUpload} />
+                </div>
+              </div>
+              
+              {/* Auto-Upload Debug UI */}
+              {autoUploadStatus && (
+                <div style={{ fontSize: '0.8rem', marginTop: '0.5rem', color: autoUploadStatus.includes('Success') ? 'var(--success)' : (autoUploadStatus.includes('Failed') ? 'var(--danger)' : 'var(--primary)') }}>
+                  {autoUploadStatus}
+                </div>
+              )}
+              {autoUploadMetadata && (
+                <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', background: '#fff', padding: '0.5rem', borderRadius: '6px', marginTop: '0.5rem', border: '1px solid #ddd6fe' }}>
+                  <p style={{ margin: '0 0 0.2rem 0', wordBreak: 'break-all' }}><strong>URL:</strong> {autoUploadMetadata.url}</p>
+                  <p style={{ margin: 0 }}><strong>Path:</strong> {autoUploadMetadata.path}</p>
                 </div>
               )}
             </div>
@@ -579,6 +647,26 @@ export default function ConnectionBuilder() {
         </section>
 
         {/* Media Schema Preview Section (Temporary Verification) */}
+        {/* Save Button & Validation Feedback */}
+        <div style={{ marginTop: '2rem', textAlign: 'center', padding: '2rem', background: '#f0f9ff', borderRadius: '16px' }}>
+          {saveError && <p style={{ color: 'var(--danger)', fontWeight: 'bold', marginBottom: '1rem' }}>⚠️ {saveError}</p>}
+          <div style={{ display: 'flex', gap: '1.5rem', justifyContent: 'center' }}>
+            <button
+              className="btn btn-primary"
+              style={{ padding: '1rem 3rem', fontSize: '1.2rem', minWidth: '240px' }}
+              onClick={() => {
+                handleSave();
+                // Navigate back to Flashcards library
+                navigate(`/student/${studentId}/flashcards`);
+              }}
+              disabled={isSaving}
+            >
+              {isSaving ? 'Saving...' : 'Save & Back'}
+            </button>
+          </div>
+        </div>
+
+        {/* Media Schema Preview Section (Temporary Verification) */}
         <section style={{ marginTop: '2rem', padding: '2rem', background: '#f8fafc', border: '2px dashed var(--border)', borderRadius: '16px' }}>
           <h3 style={{ margin: '0 0 1rem 0', color: 'var(--text-main)' }}>
             🧪 Media Schema Preview (v1)
@@ -597,66 +685,9 @@ export default function ConnectionBuilder() {
           </div>
         </section>
 
-        {/* Student Pronunciation Upload Test (Temporary Verification) */}
-        <section style={{ marginTop: '0.5rem', padding: '2rem', background: '#f5f3ff', border: '2px dashed #8b5cf6', borderRadius: '16px' }}>
-          <h3 style={{ margin: '0 0 1rem 0', color: '#6d28d9' }}>
-            🧪 Student Pronunciation Upload Test
-          </h3>
-          <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem', fontSize: '0.9rem' }}>
-            Manually verify Firebase Storage connectivity by selecting an audio file.
-          </p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            <input 
-              type="file" 
-              accept="audio/*" 
-              onChange={(e) => setTestUploadFile(e.target.files?.[0] || null)}
-              style={{ padding: '0.5rem', background: '#fff', borderRadius: '8px', border: '1px solid var(--border)' }}
-            />
-            <button 
-              className="btn btn-primary" 
-              onClick={handleTestUpload}
-              disabled={!testUploadFile || testUploadStatus === 'Uploading...'}
-              style={{ background: '#7c3aed', borderColor: '#7c3aed' }}
-            >
-              {testUploadStatus === 'Uploading...' ? 'Uploading...' : 'Test Upload to Storage'}
-            </button>
-            
-            {testUploadStatus && (
-              <div style={{ marginTop: '0.5rem', fontWeight: 'bold', color: testUploadStatus.includes('Success') ? 'var(--success)' : 'var(--danger)' }}>
-                {testUploadStatus}
-              </div>
-            )}
-
-            {testMetadata && (
-              <div style={{ marginTop: '1rem', background: '#fff', padding: '1rem', borderRadius: '8px', border: '1px solid var(--border)', fontSize: '0.8rem' }}>
-                <p style={{ margin: '0 0 0.5rem 0' }}><strong>Download URL:</strong> <a href={testMetadata.url} target="_blank" rel="noreferrer" style={{ wordBreak: 'break-all' }}>{testMetadata.url}</a></p>
-                <p style={{ margin: 0 }}><strong>Storage Path:</strong> <code>{testMetadata.path}</code></p>
-              </div>
-            )}
-          </div>
-        </section>
-
-        {/* Save Button & Validation Feedback */}
-        <div style={{ marginTop: '1rem', textAlign: 'center', padding: '2rem', background: '#f0f9ff', borderRadius: '16px' }}>
-          {saveError && <p style={{ color: 'var(--danger)', fontWeight: 'bold', marginBottom: '1rem' }}>⚠️ {saveError}</p>}
-          <div style={{ display: 'flex', gap: '1.5rem', justifyContent: 'center' }}>
-            <button
-              className="btn btn-primary"
-              style={{ padding: '1rem 3rem', fontSize: '1.2rem', minWidth: '240px' }}
-              onClick={() => {
-                handleSave();
-                // Navigate back to Flashcards library
-                navigate(`/student/${studentId}/flashcards`);
-              }}
-              disabled={isSaving}
-            >
-              {isSaving ? 'Saving...' : 'Save & Back'}
-            </button>
-          </div>
-          <p style={{ marginTop: '1rem', fontSize: '0.9rem', color: 'var(--text-muted)' }}>
-            To fully complete encoding, require: Target Expression Audio & 2 Text/Visual connections.
-          </p>
-        </div>
+        <p style={{ marginTop: '1.5rem', textAlign: 'center', fontSize: '0.9rem', color: 'var(--text-muted)' }}>
+          To fully complete encoding, require: Target Expression Audio & 2 Text/Visual connections.
+        </p>
 
       </div>
     </div>
