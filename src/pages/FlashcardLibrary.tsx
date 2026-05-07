@@ -92,24 +92,36 @@ export default function FlashcardLibrary() {
       if (!newTranslation.trim()) return;
     }
 
-    db.addLearningItem({
+    const newLearningItem = {
       chunk: newSentence.trim(),
       chunkTranslation: newTranslation.trim(),
       focusExpression: newChunk.trim(),
       pronunciation: newPronunciation.trim(),
       sentenceMeaning: newSentenceMeaning.trim(),
-      languageDirection: learnerType === 'english' ? 'en-zh' : 'zh-en',
+      languageDirection: (learnerType === 'english' ? 'en-zh' : 'zh-en') as 'en-zh' | 'zh-en',
       topic: 'Custom',
-      difficulty: 'beginner',
+      difficulty: 'beginner' as 'beginner' | 'intermediate' | 'advanced',
       createdBy: 'student',
-    });
+    };
+    db.addLearningItem(newLearningItem);
+    
+    // Update local state instead of reload
+    const sId = db.getCurrentUserId();
+    if (sId) {
+      const allItems = db.getLearningItems();
+      const studentRecords = db.getLearningRecords().filter(r => r.studentId === sId);
+      const localPairs = studentRecords
+        .map(record => ({ record, item: allItems.find(i => i.id === record.learningItemId)! }))
+        .filter(pair => pair.item && pair.item.itemType !== 'reading');
+      setItems(localPairs);
+    }
+
     setAddMode('none');
     setNewChunk('');
     setNewSentence('');
     setNewTranslation('');
     setNewSentenceMeaning('');
     setNewPronunciation('');
-    window.location.reload();
   };
 
   const handleBulkImport = (e: React.FormEvent) => {
@@ -157,15 +169,26 @@ export default function FlashcardLibrary() {
         createdBy: 'student',
       });
     });
+    
+    // Update local state instead of reload
+    const sId = db.getCurrentUserId();
+    if (sId) {
+      const allItems = db.getLearningItems();
+      const studentRecords = db.getLearningRecords().filter(r => r.studentId === sId);
+      const localPairs = studentRecords
+        .map(record => ({ record, item: allItems.find(i => i.id === record.learningItemId)! }))
+        .filter(pair => pair.item && pair.item.itemType !== 'reading');
+      setItems(localPairs);
+    }
+
     setAddMode('none');
     setBulkInput('');
-    window.location.reload();
   };
 
   const handleDeleteCard = (recordId: string) => {
     if (window.confirm('Delete this card?\nThis will remove it from your library.')) {
       db.deleteLearningRecord(recordId);
-      window.location.reload();
+      setItems(prev => prev.filter(p => p.record.id !== recordId));
     }
   };
 
@@ -230,23 +253,14 @@ export default function FlashcardLibrary() {
                   </td>
                   <td>
                     <div style={{ display: 'flex', gap: '0.5rem' }}>
-                      {isComplete ? (
-                        <button
-                          onClick={() => navigate(`/student/${studentId}/word/${item.id}`)}
-                          className="btn btn-primary"
-                          style={{ padding: '0.4rem 0.75rem', fontSize: '0.85rem' }}
-                        >
-                          Open
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => navigate(`/student/${studentId}/builder?wordId=${item.id}`)}
-                          className="btn btn-success"
-                          style={{ padding: '0.4rem 0.75rem', fontSize: '0.85rem' }}
-                        >
-                          Start
-                        </button>
-                      )}
+                      <button
+                        onClick={() => navigate(`/student/${studentId}/builder?wordId=${item.id}`)}
+                        className={isComplete ? "btn btn-outline" : "btn btn-success"}
+                        style={{ padding: '0.4rem 0.75rem', fontSize: '0.85rem' }}
+                        title="Edit Card"
+                      >
+                        {isComplete ? '✏️ Edit' : 'Start'}
+                      </button>
                       <button
                         onClick={() => handleDeleteCard(record.id)}
                         className="btn btn-outline"
@@ -291,11 +305,7 @@ export default function FlashcardLibrary() {
           return (
             <div
               key={record.id}
-              onClick={() =>
-                isComplete
-                  ? navigate(`/student/${studentId}/word/${item.id}`)
-                  : navigate(`/student/${studentId}/builder?wordId=${item.id}`)
-              }
+              onClick={() => navigate(`/student/${studentId}/builder?wordId=${item.id}`)}
               style={{
                 padding: '1rem',
                 border: '1px solid var(--border)',

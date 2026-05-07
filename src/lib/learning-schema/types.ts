@@ -85,6 +85,7 @@ export interface BaseLearningRecord {
   studentChineseExplanationAudio?: string;
   aiFeedback?: string;
   highlightedIssues?: string[];
+  googleSheetLoggedAt?: number;
 }
 
 export interface ChunkRecord extends BaseLearningRecord {

@@ -221,8 +221,20 @@ export default function ConnectionBuilder() {
       updatedAt: Date.now()
     } as ChunkRecord;
 
+    const updatedItem: LearningItem = {
+      ...chunkItem,
+      focusExpression: editableFocusExpression.trim() || chunkItem.focusExpression,
+      chunkTranslation: editableTranslation.trim() || chunkItem.chunkTranslation,
+      pronunciation: editablePronunciation.trim() || chunkItem.pronunciation,
+      chunk: editableChunk.trim() || chunkItem.chunk,
+      sentenceMeaning: editableSentenceMeaning.trim() || chunkItem.sentenceMeaning,
+    };
+
     db.saveLearningRecord(updatedRecord);
+    db.updateLearningItem(updatedItem);
+    
     setCurrentRecord(updatedRecord);
+    setCurrentItem(updatedItem);
     setIsSaving(false);
   };
 
@@ -541,27 +553,19 @@ export default function ConnectionBuilder() {
         {/* Save Button & Validation Feedback */}
         <div style={{ marginTop: '1rem', textAlign: 'center', padding: '2rem', background: '#f0f9ff', borderRadius: '16px' }}>
           {saveError && <p style={{ color: 'var(--danger)', fontWeight: 'bold', marginBottom: '1rem' }}>⚠️ {saveError}</p>}
-          {(currentRecord as ChunkRecord).encodingCompleted && !saveError && <p style={{ color: 'var(--success)', fontWeight: 'bold', marginBottom: '1.5rem', fontSize: '1.1rem' }}>✅ Encoding successfully saved and validated!</p>}
-
           <div style={{ display: 'flex', gap: '1.5rem', justifyContent: 'center' }}>
             <button
               className="btn btn-primary"
-              style={{ padding: '1rem 3rem', fontSize: '1.2rem', minWidth: '200px' }}
-              onClick={handleSave}
+              style={{ padding: '1rem 3rem', fontSize: '1.2rem', minWidth: '240px' }}
+              onClick={() => {
+                handleSave();
+                // Navigate back to Flashcards library
+                navigate(`/student/${studentId}/flashcards`);
+              }}
               disabled={isSaving}
             >
-              {isSaving ? 'Saving...' : 'Save Encoding Progress'}
+              {isSaving ? 'Saving...' : 'Save & Back'}
             </button>
-
-            {(currentRecord as ChunkRecord).encodingCompleted && !saveError && (
-              <button
-                className="btn btn-success"
-                style={{ padding: '1rem 3rem', fontSize: '1.2rem', minWidth: '200px' }}
-                 onClick={() => navigate(`/student/${studentId}`)}
-              >
-                Confirm & Next &rarr;
-              </button>
-            )}
           </div>
           <p style={{ marginTop: '1rem', fontSize: '0.9rem', color: 'var(--text-muted)' }}>
             To fully complete encoding, require: Target Expression Audio & 2 Text/Visual connections.

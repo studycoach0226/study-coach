@@ -88,20 +88,30 @@ export default function StudentDashboard() {
     if (!newChunk.trim() || !newSentence.trim()) return;
 
     db.addLearningItem({
-      chunk: newSentence.trim(),
-      chunkTranslation: newTranslation.trim(),
-      focusExpression: newChunk.trim(),
+      chunk: newChunk,
+      chunkTranslation: newTranslation,
+      focusExpression: newChunk,
       languageDirection: 'en-zh',
       topic: 'Custom',
       difficulty: 'beginner',
       createdBy: 'student'
     });
 
+    // Update local state instead of reload
+    const sId = db.getCurrentUserId();
+    if (sId) {
+      const allItems = db.getLearningItems();
+      const studentRecords = db.getLearningRecords().filter(r => r.studentId === sId);
+      const localPairs = studentRecords
+        .map(record => ({ record, item: allItems.find(i => i.id === record.learningItemId)! }))
+        .filter(pair => pair.item && pair.item.itemType !== 'reading');
+      setItems(localPairs);
+    }
+
     setAddMode('none');
     setNewChunk('');
     setNewSentence('');
     setNewTranslation('');
-    window.location.reload();
   };
 
   const handleBulkImport = (e: React.FormEvent) => {
@@ -129,15 +139,25 @@ export default function StudentDashboard() {
       }
     });
 
+    // Update local state instead of reload
+    const sId = db.getCurrentUserId();
+    if (sId) {
+      const allItems = db.getLearningItems();
+      const studentRecords = db.getLearningRecords().filter(r => r.studentId === sId);
+      const localPairs = studentRecords
+        .map(record => ({ record, item: allItems.find(i => i.id === record.learningItemId)! }))
+        .filter(pair => pair.item && pair.item.itemType !== 'reading');
+      setItems(localPairs);
+    }
+
     setAddMode('none');
     setBulkInput('');
-    window.location.reload();
   };
 
   const handleDeleteCard = (recordId: string) => {
     if (window.confirm("Delete this card?\nThis will remove it from your library.")) {
       db.deleteLearningRecord(recordId);
-      window.location.reload();
+      setItems(prev => prev.filter(p => p.record.id !== recordId));
     }
   };
 
@@ -194,23 +214,14 @@ export default function StudentDashboard() {
                   </td>
                   <td>
                     <div style={{ display: 'flex', gap: '0.5rem' }}>
-                      {isComplete ? (
-                        <button
-                          onClick={() => navigate(`/student/${studentId}/word/${item.id}`)}
-                          className="btn btn-primary"
-                          style={{ padding: '0.4rem 0.75rem', fontSize: '0.9rem' }}
-                        >
-                          Open
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => navigate(`/student/${studentId}/builder?wordId=${item.id}`)}
-                          className="btn btn-success"
-                          style={{ padding: '0.4rem 0.75rem', fontSize: '0.9rem' }}
-                        >
-                          Start
-                        </button>
-                      )}
+                      <button
+                        onClick={() => navigate(`/student/${studentId}/builder?wordId=${item.id}`)}
+                        className={isComplete ? "btn btn-outline" : "btn btn-success"}
+                        style={{ padding: '0.4rem 0.75rem', fontSize: '0.9rem' }}
+                        title="Edit Card"
+                      >
+                        {isComplete ? '✏️ Edit' : 'Start'}
+                      </button>
                       <button
                         onClick={() => handleDeleteCard(record.id)}
                         className="btn btn-outline"

@@ -48,7 +48,7 @@ export default function TeacherStudentAssignment() {
     const index = current.indexOf(id);
     if (index >= 0) current.splice(index, 1);
     else current.push(id);
-    
+
     const updated = { ...assignment, learning_item_ids: current, updated_at: new Date().toISOString() };
     assignmentStore.save(updated);
     setAssignment(updated);
@@ -60,7 +60,7 @@ export default function TeacherStudentAssignment() {
     const index = current.indexOf(id);
     if (index >= 0) current.splice(index, 1);
     else current.push(id);
-    
+
     const updated = { ...assignment, template_ids: current, updated_at: new Date().toISOString() };
     assignmentStore.save(updated);
     setAssignment(updated);
@@ -79,10 +79,10 @@ export default function TeacherStudentAssignment() {
           <button className="btn btn-success" onClick={handleSyncAll}>Sync All to Students</button>
         </div>
       </header>
-      
+
       <div className="card" style={{ marginBottom: '2rem' }}>
         <label>Select Student</label>
-        <select 
+        <select
           style={{ width: '100%', padding: '0.75rem' }}
           onChange={(e) => setSelectedStudent(students.find(s => s.id === e.target.value) || null)}
           value={selectedStudent?.id || ''}
@@ -99,8 +99,8 @@ export default function TeacherStudentAssignment() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '500px', overflowY: 'auto', paddingRight: '0.5rem' }}>
               {items.map(item => (
                 <label key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.85rem', padding: '0.75rem', border: '1px solid var(--border)', borderRadius: '8px' }}>
-                  <input 
-                    type="checkbox" 
+                  <input
+                    type="checkbox"
                     checked={Array.isArray(assignment.learning_item_ids) && assignment.learning_item_ids.includes(item.id)}
                     onChange={() => toggleItem(item.id)}
                     style={{ width: '18px', height: '18px' }}
@@ -127,15 +127,15 @@ export default function TeacherStudentAssignment() {
               {templates.map(t => {
                 const isGloballyDisabled = !t.enabled;
                 return (
-                  <label key={t.template_id} style={{ 
-                    display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem', 
+                  <label key={t.template_id} style={{
+                    display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem',
                     border: '1px solid var(--border)', borderRadius: '4px',
                     background: isGloballyDisabled ? '#f1f5f9' : 'transparent',
                     opacity: isGloballyDisabled ? 0.6 : 1,
                     cursor: isGloballyDisabled ? 'not-allowed' : 'pointer'
                   }}>
-                    <input 
-                      type="checkbox" 
+                    <input
+                      type="checkbox"
                       checked={assignment.template_ids.includes(t.template_id)}
                       onChange={() => !isGloballyDisabled && toggleTemplate(t.template_id)}
                       disabled={isGloballyDisabled}
