@@ -16,6 +16,7 @@ import StudentAssignments from './pages/StudentAssignments';
 import ReadingPractice from './pages/ReadingPractice';
 import TeacherStudentManager from './pages/TeacherStudentManager';
 import ListenSpeak from './pages/ListenSpeak';
+import StudentReading from './pages/StudentReading';
 
 import Navbar from './components/Navbar';
 import StudentRouteHandler from './components/StudentRouteHandler';
@@ -39,6 +40,7 @@ export default function App() {
           <Route path="/student/:studentId/practice" element={<RetrievalPractice />} />
           <Route path="/student/:studentId/report" element={<ReportCard />} />
           <Route path="/student/:studentId/assignments" element={<StudentAssignments />} />
+          <Route path="/student/:studentId/reading" element={<StudentReading />} />
           <Route path="/student/:studentId/reading-practice/:itemId" element={<ReadingPractice />} />
           <Route path="/student/:studentId/listen-speak" element={<ListenSpeak />} />
 

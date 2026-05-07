@@ -110,6 +110,7 @@ export default function Navbar() {
         ) : (
           <>
             <NavLink to={`/student/${effectiveStudentId}`} current={location.pathname}>Dashboard</NavLink>
+            <NavLink to={`/student/${effectiveStudentId}/reading`} current={location.pathname}>My Reading</NavLink>
             <NavLink to={`/student/${effectiveStudentId}/practice`} current={location.pathname}>Retrieval Practice</NavLink>
             <NavLink to={`/student/${effectiveStudentId}/listen-speak`} current={location.pathname}>Listen & Speak</NavLink>
             <NavLink to={`/student/${effectiveStudentId}/flashcards`} current={location.pathname}>My Flashcards</NavLink>
