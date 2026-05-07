@@ -10,18 +10,28 @@ export default function Navbar() {
   const user = db.getLoggedUser();
   const activeRole = db.getCurrentRole();
 
+  // Parse studentId from URL as backup for broken links on initial load
+  const studentIdFromPath = location.pathname.startsWith('/student/') 
+    ? location.pathname.split('/')[2] 
+    : null;
+  const effectiveStudentId = db.getCurrentUserId() || studentIdFromPath;
+
   // Redirect if visiting a path that doesn't match the active role
   useEffect(() => {
     if (location.pathname === '/') return; // Don't redirect on login page
 
-    if (!user) {
-      navigate('/');
-      return;
-    }
-
     // Role-based path guarding
     const isTeacherPath = location.pathname.startsWith('/teacher');
     const isStudentPath = location.pathname.startsWith('/student');
+
+    if (!user) {
+      // For student workspace paths, we don't redirect to / because 
+      // StudentRouteHandler will initialize the session from the URL.
+      if (isStudentPath) return;
+
+      navigate('/');
+      return;
+    }
 
     if (activeRole === 'student' && isTeacherPath) {
       navigate('/student');
@@ -99,11 +109,11 @@ export default function Navbar() {
           </>
         ) : (
           <>
-            <NavLink to={`/student/${db.getCurrentUserId()}`} current={location.pathname}>Dashboard</NavLink>
-            <NavLink to={`/student/${db.getCurrentUserId()}/practice`} current={location.pathname}>Retrieval Practice</NavLink>
-            <NavLink to={`/student/${db.getCurrentUserId()}/listen-speak`} current={location.pathname}>Listen & Speak</NavLink>
-            <NavLink to={`/student/${db.getCurrentUserId()}/flashcards`} current={location.pathname}>My Flashcards</NavLink>
-            <NavLink to={`/student/${db.getCurrentUserId()}/report`} current={location.pathname}>View Report</NavLink>
+            <NavLink to={`/student/${effectiveStudentId}`} current={location.pathname}>Dashboard</NavLink>
+            <NavLink to={`/student/${effectiveStudentId}/practice`} current={location.pathname}>Retrieval Practice</NavLink>
+            <NavLink to={`/student/${effectiveStudentId}/listen-speak`} current={location.pathname}>Listen & Speak</NavLink>
+            <NavLink to={`/student/${effectiveStudentId}/flashcards`} current={location.pathname}>My Flashcards</NavLink>
+            <NavLink to={`/student/${effectiveStudentId}/report`} current={location.pathname}>View Report</NavLink>
           </>
         )}
       </nav>
