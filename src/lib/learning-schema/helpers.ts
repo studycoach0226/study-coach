@@ -32,10 +32,12 @@ export function validateEncoding(record: StudentLearningRecord): {
     connections.imageUrl
   ];
   
-  const connectionCount = validConnectionFields.filter(v => !!v && v.trim() !== '').length;
+  const manualCount = validConnectionFields.filter(v => !!v && typeof v === 'string' && v.trim() !== '').length;
+  const aiCount = (connections.aiConnections || []).length;
+  const totalCount = manualCount + aiCount;
   
-  if (connectionCount < 2) {
-    missing.push(`At least 2 connections (you have ${connectionCount})`);
+  if (totalCount < 2) {
+    missing.push(`At least 2 connections (you have ${totalCount})`);
   }
   
   return {
@@ -52,7 +54,7 @@ export function getEffectiveConnection(
   field: keyof ConnectionFields,
   teacherConnections: ConnectionFields,
   studentConnections: ConnectionFields
-): string | undefined {
+): any {
   return studentConnections[field] || teacherConnections[field];
 }
 
@@ -60,11 +62,13 @@ export function getEffectiveConnection(
  * Counts how many unique connection fields have been filled by the student.
  */
 export function countStudentConnections(connections: ConnectionFields): number {
-  const textFields = Object.entries(connections).filter(([key, value]) => {
-    if (key === 'imageUrl' || key === 'imageNote') return false;
+  const manualFields = Object.entries(connections).filter(([key, value]) => {
+    if (key === 'imageUrl' || key === 'imageNote' || key === 'aiConnections') return false;
     return !!value;
   }).length;
   
   const hasVisual = !!(connections.imageUrl || connections.imageNote);
-  return textFields + (hasVisual ? 1 : 0);
+  const aiCount = (connections.aiConnections || []).length;
+  
+  return manualFields + (hasVisual ? 1 : 0) + aiCount;
 }

@@ -1,5 +1,16 @@
 export type LanguageDirection = 'en-zh' | 'zh-en';
 
+export interface AiConnection {
+  id: string;
+  type: string;
+  relationshipTag: string;
+  noteLine: string;
+  explanation: string;
+  optionalPronunciation?: string;
+  optionalMeaning?: string;
+  studentComment?: string;
+}
+
 export interface ConnectionFields {
   customChunk?: string;
   customTranslation?: string;
@@ -15,6 +26,7 @@ export interface ConnectionFields {
   imageNote?: string;
   pronunciation?: string;
   sentenceMeaning?: string;
+  aiConnections?: AiConnection[];
 }
 
 export interface BaseLearningItem {

@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { db } from '../lib/db';
-import { LearningItem, StudentLearningRecord, ConnectionFields, ChunkItem, ChunkRecord } from '../lib/types';
+import { LearningItem, StudentLearningRecord, ConnectionFields, ChunkItem, ChunkRecord, AiConnection } from '../lib/types';
 import AudioRecorder from '../components/AudioRecorder';
 import { playUnifiedAudio } from '../lib/audioUtils';
 import { saveFlashcard } from '../lib/firebaseDb';
 import { getActiveEncodingFields, MediaMetadata } from '../config/encodingSchema';
 import { uploadAudioFile } from '../lib/storageUtils';
+import { generateConnectionSuggestions } from '../lib/aiService';
 
 type LoadingStatus = 'idle' | 'loading' | 'error' | 'ready';
 
@@ -50,6 +51,10 @@ export default function ConnectionBuilder() {
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
+  // AI Connection Suggestions State
+  const [aiSuggestions, setAiSuggestions] = useState<AiConnection[]>([]);
+  const [isAiSuggestionsLoading, setIsAiSuggestionsLoading] = useState(false);
+  const [editingConnectionIds, setEditingConnectionIds] = useState<Set<string>>(new Set());
 
   // Audio State (Unified)
   const [sentenceUploadMetadata, setSentenceUploadMetadata] = useState<MediaMetadata | null>(null);
@@ -71,6 +76,8 @@ export default function ConnectionBuilder() {
     setErrorCode(null);
     setErrorMessage(null);
     setSaveError(null);
+    setAiSuggestions([]);
+    setEditingConnectionIds(new Set());
   };
 
   useEffect(() => {
@@ -88,7 +95,7 @@ export default function ConnectionBuilder() {
 
         const queue = allRecords
           .map(record => ({ record, item: allItems.find(i => i.id === record.learningItemId)! }))
-          .filter(pair => pair.item && !db.isOnboardingComplete(pair.record));
+          .filter(pair => pair.item && !pair.item.id.includes('reading') && !db.isOnboardingComplete(pair.record));
 
         setPendingQueue(queue);
         return;
@@ -149,6 +156,9 @@ export default function ConnectionBuilder() {
 
         setStatus('ready');
 
+        // Trigger AI suggestions
+        loadAiSuggestions(chunkItem, sId);
+
       } catch (err) {
         setErrorCode('UNKNOWN_ERROR');
         setErrorMessage(err instanceof Error ? err.message : 'An unexpected error occurred.');
@@ -158,6 +168,33 @@ export default function ConnectionBuilder() {
 
     loadData();
   }, [wordIdParam]);
+
+  const loadAiSuggestions = async (item: ChunkItem, sId: string) => {
+    setIsAiSuggestionsLoading(true);
+    try {
+      const allRecords = db.getLearningRecords().filter(r => r.studentId === sId);
+      const allItems = db.getLearningItems();
+      const knownWords = allRecords
+        .filter(r => r.encodingCompleted)
+        .map(r => allItems.find(i => i.id === r.learningItemId)?.focusExpression || '')
+        .filter(Boolean);
+
+      const suggestions = await generateConnectionSuggestions({
+        word: item.focusExpression || item.chunk,
+        learningLanguage: item.languageDirection === 'en-zh' ? 'English' : 'Chinese',
+        nativeLanguage: item.languageDirection === 'en-zh' ? 'Chinese' : 'English',
+        chunk: item.chunk,
+        sentence: item.chunk, 
+        knownWords: knownWords.slice(0, 20) 
+      });
+
+      setAiSuggestions(suggestions.map((s, idx) => ({ ...s, id: 'ai_' + idx + '_' + Date.now() })));
+    } catch (error) {
+      console.error('Failed to load AI suggestions:', error);
+    } finally {
+      setIsAiSuggestionsLoading(false);
+    }
+  };
 
   const playAudio = (type: 'focusExpression' | 'chunk') => {
     let url = type === 'focusExpression' ? (audioUrls.focusExpression || audioUrls.word) : audioUrls.chunk;
@@ -174,7 +211,7 @@ export default function ConnectionBuilder() {
   };
 
 
-  const handleConnectionChange = (field: keyof ConnectionFields, value: string) => {
+  const handleConnectionChange = (field: keyof ConnectionFields, value: any) => {
     setConnections(prev => ({ ...prev, [field]: value }));
   };
 
@@ -206,11 +243,15 @@ export default function ConnectionBuilder() {
       connections.oppositeMeaning,
       connections.usageContext,
       connections.story,
-      connections.imageUrl
+      connections.imageUrl,
+      ...(connections.aiConnections || [])
     ];
 
     // personalSentence is EXCLUDED from standard textCount calculations
-    const connectionCount = validConnectionFields.filter(v => !!v && v.trim() !== '').length;
+    const connectionCount = validConnectionFields.filter(v => {
+      if (typeof v === 'string') return !!v && v.trim() !== '';
+      return !!v; // For objects (aiConnections)
+    }).length;
 
     let isValid = true;
     if (!hasTargetAudio) {
@@ -295,6 +336,38 @@ export default function ConnectionBuilder() {
     }
   };
 
+  const handleAddSuggestion = (suggestion: Omit<AiConnection, 'id'>) => {
+    const id = 'sel_' + Date.now();
+    const newConn: AiConnection = { ...suggestion, id, studentComment: '' };
+    const nextConns = [...(connections.aiConnections || []), newConn];
+    handleConnectionChange('aiConnections', nextConns);
+    setEditingConnectionIds(prev => new Set(prev).add(id));
+  };
+
+  const handleRemoveSelectedSuggestion = (id: string) => {
+    const nextConns = (connections.aiConnections || []).filter(s => s.id !== id);
+    handleConnectionChange('aiConnections', nextConns);
+    setEditingConnectionIds(prev => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  };
+
+  const handleUpdateSelectedSuggestion = (id: string, updates: Partial<AiConnection>) => {
+    const nextConns = (connections.aiConnections || []).map(s => s.id === id ? { ...s, ...updates } : s);
+    handleConnectionChange('aiConnections', nextConns);
+  };
+
+  const toggleEditingConnection = (id: string) => {
+    setEditingConnectionIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
 
   // 1. Loading State
   if (status === 'loading') {
@@ -357,6 +430,8 @@ export default function ConnectionBuilder() {
 
   // 4. Ready State (Mission Flow, Single Page Layout)
   if (status !== 'ready' || !currentItem || !currentRecord) return null;
+
+  const selectedAiConnections = connections.aiConnections || [];
 
   return (
     <div style={{ maxWidth: '800px', margin: '2rem auto', padding: '0 1rem' }}>
@@ -558,6 +633,189 @@ export default function ConnectionBuilder() {
           </div>
         </section>
 
+        {/* Section 2.5: AI Connections Section */}
+        <section style={{ background: '#f8fafc', padding: '2rem', borderRadius: '16px', border: '1px solid var(--border)' }}>
+          <h3 style={{ margin: '0 0 1rem 0', color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+            ✨ AI-Assisted Connections
+          </h3>
+          
+          {/* My Selected Connections Area */}
+          <div style={{ marginBottom: '2rem', padding: '1.5rem', background: '#fff', borderRadius: '12px', border: '2px solid var(--primary)' }}>
+            <h4 style={{ margin: '0 0 1.5rem 0', color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              📍 My Selected Connections
+            </h4>
+            {selectedAiConnections.length === 0 ? (
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', textAlign: 'center', fontStyle: 'italic', margin: '1rem 0' }}>
+                No suggestions selected yet. Explore teacher-style notes below!
+              </p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                {selectedAiConnections.map(s => {
+                  const isEditing = editingConnectionIds.has(s.id);
+                  
+                  if (!isEditing) {
+                    return (
+                      <div key={s.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1rem', background: '#f8fafc', borderRadius: '12px', border: '1px solid var(--border)' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                          <span style={{ fontSize: '0.65rem', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{s.relationshipTag}</span>
+                          <div style={{ fontWeight: 'bold', fontSize: '1.05rem', color: 'var(--text-main)' }}>{s.noteLine}</div>
+                          {s.studentComment && <div style={{ fontSize: '0.85rem', color: 'var(--primary)', fontStyle: 'italic' }}>"{s.studentComment}"</div>}
+                        </div>
+                        <div style={{ display: 'flex', gap: '0.5rem' }}>
+                          <button onClick={() => toggleEditingConnection(s.id)} className="btn btn-outline" style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem', background: '#fff' }}>✏️ Edit</button>
+                          <button onClick={() => handleRemoveSelectedSuggestion(s.id)} className="btn btn-outline" style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem', color: 'var(--danger)', borderColor: '#fca5a5', background: '#fff' }}>🗑 Remove</button>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div key={s.id} style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', padding: '1.25rem', background: '#f8fafc', borderRadius: '12px', border: '1px solid var(--primary)', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <select 
+                          style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', outline: 'none', cursor: 'pointer', padding: '0.2rem 0.5rem' }}
+                          value={s.relationshipTag}
+                          onChange={(e) => handleUpdateSelectedSuggestion(s.id, { relationshipTag: e.target.value })}
+                        >
+                          {['meaning', 'sound', 'character', 'collocation', 'usage', 'root', 'shape'].map(tag => (
+                            <option key={tag} value={tag}>{tag}</option>
+                          ))}
+                        </select>
+                        <button 
+                          style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 500 }}
+                          onClick={() => handleRemoveSelectedSuggestion(s.id)}
+                        >
+                          ✕ Remove
+                        </button>
+                      </div>
+                      
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                          <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 'bold' }}>MEMORY NOTE</label>
+                          <input 
+                            className="input-field"
+                            style={{ fontWeight: 'bold', fontSize: '1.1rem', background: '#fff' }}
+                            value={s.noteLine}
+                            onChange={(e) => handleUpdateSelectedSuggestion(s.id, { noteLine: e.target.value })}
+                            placeholder="Short memory note..."
+                          />
+                        </div>
+                        
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                          <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 'bold' }}>MY COMMENT / EXTRA NOTE</label>
+                          <textarea 
+                            className="input-field" 
+                            value={s.studentComment}
+                            onChange={(e) => handleUpdateSelectedSuggestion(s.id, { studentComment: e.target.value })}
+                            style={{ minHeight: '60px', fontSize: '0.9rem', background: '#fff' }}
+                            placeholder="Add your own thought or comment..."
+                          />
+                        </div>
+
+                        {s.explanation && (
+                          <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontStyle: 'italic', background: '#fff', padding: '0.75rem', borderRadius: '8px', border: '1px solid #eee' }}>
+                            <span style={{ fontWeight: 'bold', color: 'var(--primary)', fontSize: '0.7rem', display: 'block', marginBottom: '0.25rem', textTransform: 'uppercase' }}>Teacher Explanation:</span>
+                            {s.explanation}
+                          </div>
+                        )}
+                        
+                        <button 
+                          onClick={() => toggleEditingConnection(s.id)} 
+                          className="btn btn-primary" 
+                          style={{ width: 'fit-content', alignSelf: 'flex-end', padding: '0.5rem 1.5rem', fontSize: '0.9rem' }}
+                        >
+                          Save Connection
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <h4 style={{ margin: '0 0 1rem 0', fontSize: '0.85rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            AI Teacher Suggestions
+          </h4>
+          
+          {isAiSuggestionsLoading ? (
+            <div style={{ textAlign: 'center', padding: '2rem' }}>
+              <div className="spinner" style={{ width: '30px', height: '30px', border: '3px solid var(--border)', borderTopColor: 'var(--primary)', borderRadius: '50%', animation: 'spin 1s linear infinite', margin: '0 auto' }} />
+              <p style={{ color: 'var(--text-muted)', marginTop: '1rem', fontSize: '0.9rem' }}>Writing teacher notes...</p>
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1rem' }}>
+              {aiSuggestions.length === 0 ? (
+                <p style={{ color: 'var(--text-muted)', textAlign: 'center', gridColumn: '1/-1' }}>No suggestions available for this word.</p>
+              ) : (
+                aiSuggestions.map(item => {
+                  const isSelected = !!selectedAiConnections.find(s => s.noteLine === item.noteLine && s.relationshipTag === item.relationshipTag);
+                  return (
+                    <div 
+                      key={item.id} 
+                      style={{ 
+                        background: '#fff', 
+                        padding: '1.25rem', 
+                        borderRadius: '16px', 
+                        border: '1px solid var(--border)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '0.75rem',
+                        boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)',
+                        opacity: isSelected ? 0.6 : 1,
+                        transition: 'all 0.2s ease'
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <span style={{ 
+                          fontSize: '0.7rem', 
+                          fontWeight: 'bold', 
+                          color: 'var(--primary)', 
+                          background: '#eff6ff', 
+                          padding: '0.2rem 0.5rem', 
+                          borderRadius: '4px',
+                          textTransform: 'uppercase'
+                        }}>
+                          {item.relationshipTag}
+                        </span>
+                        <button 
+                          className="btn btn-outline" 
+                          style={{ 
+                            padding: '0.25rem 0.75rem', 
+                            fontSize: '0.85rem', 
+                            background: isSelected ? 'var(--success)' : '#fff', 
+                            color: isSelected ? '#fff' : 'var(--primary)', 
+                            borderColor: isSelected ? 'var(--success)' : 'var(--primary)',
+                            fontWeight: 600
+                          }}
+                          onClick={() => handleAddSuggestion(item)}
+                          disabled={isSelected}
+                        >
+                          {isSelected ? '✓ Added' : '+ Add'}
+                        </button>
+                      </div>
+                      
+                      <div style={{ fontWeight: 'bold', fontSize: '1.15rem', color: 'var(--text-main)', lineHeight: '1.3' }}>
+                        {item.noteLine}
+                      </div>
+
+                      <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-muted)', lineHeight: '1.5' }}>
+                        {item.explanation}
+                      </p>
+
+                      {(item.optionalPronunciation || item.optionalMeaning) && (
+                        <div style={{ fontSize: '0.8rem', color: 'var(--primary)', marginTop: 'auto', paddingTop: '0.5rem', borderTop: '1px solid #f8fafc' }}>
+                          {item.optionalPronunciation} {item.optionalMeaning && <span style={{ color: 'var(--text-muted)' }}> - {item.optionalMeaning}</span>}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          )}
+        </section>
+
         {/* Section 3: Visual Connection */}
         <section>
           <h3 style={{ margin: '0 0 1rem 0', color: 'var(--text-main)', borderBottom: '2px solid var(--border)', paddingBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -608,7 +866,6 @@ export default function ConnectionBuilder() {
           />
         </section>
 
-        {/* Media Schema Preview Section (Temporary Verification) */}
         {/* Save Button & Validation Feedback */}
         <div style={{ marginTop: '2rem', textAlign: 'center', padding: '2rem', background: '#f0f9ff', borderRadius: '16px' }}>
           {saveError && <p style={{ color: 'var(--danger)', fontWeight: 'bold', marginBottom: '1rem' }}>⚠️ {saveError}</p>}
