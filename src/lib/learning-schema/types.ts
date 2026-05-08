@@ -19,7 +19,7 @@ export interface ConnectionFields {
 
 export interface BaseLearningItem {
   id: string;
-  itemType?: 'chunk' | 'reading'; // defaults to chunk if missing
+  itemType?: 'chunk' | 'reading' | 'exercise'; // defaults to chunk if missing
   languageDirection: LanguageDirection;
   topic?: string;
   difficulty?: 'beginner' | 'intermediate' | 'advanced';
@@ -60,7 +60,17 @@ export interface ReadingItem extends BaseLearningItem {
   teacherReferenceAudio?: string;
 }
 
-export type LearningItem = ChunkItem | ReadingItem;
+export interface ExerciseItem extends BaseLearningItem {
+  itemType: 'exercise';
+  questions: {
+    id: string;
+    text: string;
+    options: string[];
+    correctAnswer: string;
+  }[];
+}
+
+export type LearningItem = ChunkItem | ReadingItem | ExerciseItem;
 
 export type RecordStatus = 'new' | 'learning' | 'practicing' | 'weak' | 'completed';
 
@@ -107,4 +117,10 @@ export interface ReadingRecord extends BaseLearningRecord {
   highlightedIssues?: string[];
 }
 
-export type StudentLearningRecord = ChunkRecord | ReadingRecord;
+export interface ExerciseRecord extends BaseLearningRecord {
+  itemType: 'exercise';
+  answers: Record<string, string>;
+  score?: number;
+}
+
+export type StudentLearningRecord = ChunkRecord | ReadingRecord | ExerciseRecord;

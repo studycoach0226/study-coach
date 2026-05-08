@@ -17,6 +17,8 @@ import ReadingPractice from './pages/ReadingPractice';
 import TeacherStudentManager from './pages/TeacherStudentManager';
 import ListenSpeak from './pages/ListenSpeak';
 import StudentReading from './pages/StudentReading';
+import StudentExercises from './pages/StudentExercises';
+import ExercisePractice from './pages/ExercisePractice';
 
 import Navbar from './components/Navbar';
 import StudentRouteHandler from './components/StudentRouteHandler';
@@ -41,7 +43,9 @@ export default function App() {
           <Route path="/student/:studentId/report" element={<ReportCard />} />
           <Route path="/student/:studentId/assignments" element={<StudentAssignments />} />
           <Route path="/student/:studentId/reading" element={<StudentReading />} />
+          <Route path="/student/:studentId/exercises" element={<StudentExercises />} />
           <Route path="/student/:studentId/reading-practice/:itemId" element={<ReadingPractice />} />
+          <Route path="/student/:studentId/exercise-practice/:itemId" element={<ExercisePractice />} />
           <Route path="/student/:studentId/listen-speak" element={<ListenSpeak />} />
 
           {/* Fallback Legacy Routes */}

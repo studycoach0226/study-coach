@@ -24,6 +24,8 @@ export const SHEET_NAMES = {
   STUDENTS: 'students',
   STUDENT_PROGRESS: 'student_progress',
   READING_ASSIGNMENTS: 'reading_assignments',
+  EXERCISE_QUESTIONS: 'exercise_questions',
+  EXERCISE_ASSIGNMENTS: 'exercise_assignments',
 } as const;
 
 // ===== 欄位名稱：reading_articles =====
@@ -38,6 +40,31 @@ export const READING_ARTICLES_FIELDS = {
   SUPPORT_WORDS: 'support_words',
   IS_PUBLISHED: 'is_published',
   NOTES: 'notes',
+} as const;
+
+// ===== 欄位名稱：exercise_questions =====
+export const EXERCISE_QUESTIONS_FIELDS = {
+  ID: 'id',
+  EXERCISE_CODE: 'exercise_code',
+  QUESTION_TEXT: 'question_text',
+  OPTION_A: 'option_a',
+  OPTION_B: 'option_b',
+  OPTION_C: 'option_c',
+  OPTION_D: 'option_d',
+  CORRECT_ANSWER: 'correct_answer',
+  WORD_RANGE: 'word_range',
+  DIFFICULTY: 'difficulty',
+  TAGS: 'tags',
+} as const;
+
+// ===== 欄位名稱：exercise_assignments =====
+export const EXERCISE_ASSIGNMENTS_FIELDS = {
+  ASSIGNMENT_ID: 'assignment_id',
+  STUDENT_ID: 'student_id',
+  EXERCISE_CODE: 'exercise_code',
+  ASSIGNED_AT: 'assigned_at',
+  DUE_DATE: 'due_date',
+  STATUS: 'status',
 } as const;
 
 // ===== 欄位名稱：reading_history =====
