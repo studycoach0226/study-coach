@@ -85,7 +85,7 @@ export default function FlashcardLibrary() {
 
   const handleCreateSingle = (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     // Validation
     if (learnerType === 'english') {
       if (!newChunk.trim() || !newTranslation.trim()) return;
@@ -107,7 +107,7 @@ export default function FlashcardLibrary() {
       createdBy: 'student',
     };
     db.addLearningItem(newLearningItem);
-    
+
     // Update local state instead of reload
     const sId = db.getCurrentUserId();
     if (sId) {
@@ -135,7 +135,7 @@ export default function FlashcardLibrary() {
     bulkInput.split('\n').forEach(line => {
       if (!line.trim()) return;
       const parts = line.split('|').map(p => p.trim());
-      
+
       let targetExpression = '';
       let targetText = '';
       let meaning = '';
@@ -149,7 +149,7 @@ export default function FlashcardLibrary() {
         meaning = parts[1] || '';
         context = parts[2] || '';
         contextMeaning = parts[3] || '';
-        
+
         if (!targetExpression || !meaning) return;
       } else {
         // format: targetExpression | targetText | meaning | context | contextText | contextMeaning
@@ -176,7 +176,7 @@ export default function FlashcardLibrary() {
         createdBy: 'student',
       });
     });
-    
+
     // Update local state instead of reload
     const sId = db.getCurrentUserId();
     if (sId) {
@@ -196,7 +196,7 @@ export default function FlashcardLibrary() {
     if (window.confirm('Delete this card?\nThis will remove it from your library.')) {
       const pair = items.find(p => p.record.id === recordId);
       if (pair) {
-        deleteFlashcardFromCloud(pair.record.studentId, pair.record.learningItemId).catch(() => {});
+        deleteFlashcardFromCloud(pair.record.studentId, pair.record.learningItemId).catch(() => { });
       }
       db.deleteLearningRecord(recordId);
       setItems(prev => prev.filter(p => p.record.id !== recordId));
@@ -382,8 +382,8 @@ export default function FlashcardLibrary() {
         <div style={{ marginBottom: '1rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '1.5rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <span style={{ fontWeight: 'bold', color: 'var(--text-muted)', fontSize: '0.9rem' }}>Learning Mode:</span>
-            <select 
-              value={learnerType} 
+            <select
+              value={learnerType}
               onChange={(e) => setLearnerType(e.target.value as any)}
               style={{ padding: '0.3rem 0.6rem', borderRadius: '8px', border: '1px solid var(--border)', background: '#fff', fontSize: '0.9rem', cursor: 'pointer', outline: 'none' }}
             >
@@ -396,12 +396,12 @@ export default function FlashcardLibrary() {
             <div style={{ display: 'flex', gap: '1rem', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
               {learnerType === 'chinese' && (
                 <label style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', cursor: 'pointer' }}>
-                  <input type="checkbox" checked={displayPrefs.showTargetExpression} onChange={e => setDisplayPrefs({...displayPrefs, showTargetExpression: e.target.checked})} />
+                  <input type="checkbox" checked={displayPrefs.showTargetExpression} onChange={e => setDisplayPrefs({ ...displayPrefs, showTargetExpression: e.target.checked })} />
                   Show Chinese Characters
                 </label>
               )}
             </div>
-            
+
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <button onClick={handleSavePreferences} className="btn btn-outline" style={{ padding: '0.3rem 0.6rem', fontSize: '0.8rem', background: '#fff', borderRadius: '6px' }}>
                 Save Prefs
@@ -560,8 +560,8 @@ export default function FlashcardLibrary() {
                 boxSizing: 'border-box',
                 marginBottom: '1rem',
               }}
-              placeholder={learnerType === 'english' 
-                ? 'waiting for | 等公車 | Jimmy is waiting for a bus. | Jimmy 在等公車' 
+              placeholder={learnerType === 'english'
+                ? 'waiting for | 等公車 | Jimmy is waiting for a bus. | Jimmy 在等公車'
                 : 'deng3 gong1che1 | 等公車 | waiting for a bus | wo3 zai4 deng3 gong1che1 | 我在等公車。 | I am waiting for a bus.'
               }
             />
