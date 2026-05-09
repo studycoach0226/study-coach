@@ -286,6 +286,8 @@ export default function ConnectionBuilder() {
       audioUrls,
       audioFiles,
       encodingCompleted: isValid,
+      encodingStatus: isValid ? 'done' : 'pending',
+      isConnectionBuilt: isValid,
       updatedAt: Date.now()
     };
 

@@ -1,5 +1,6 @@
 import { User, LearningItem, StudentLearningRecord, Attempt, RecordStatus, ChunkItem, ChunkRecord } from './types';
 import { validateEncoding } from './learning-schema/helpers';
+import { saveFlashcard } from './firebaseDb';
 
 const KEYS = {
   USERS: 'vocab_users',
@@ -249,7 +250,7 @@ export const db = {
     const sId = db.getCurrentUserId();
     const role = db.getCurrentRole();
     if (sId && role === 'student' && !isReading) {
-      db.saveLearningRecord({
+      const record: ChunkRecord = {
         id: 'lr_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
         studentId: sId,
         learningItemId: newItem.id,
@@ -258,10 +259,17 @@ export const db = {
         audioUrls: {},
         status: 'new',
         encodingCompleted: false,
+        encodingStatus: 'pending',
+        isConnectionBuilt: false,
         savedToLibrary: true,
         startedAt: Date.now(),
         updatedAt: Date.now()
-      } as ChunkRecord);
+      };
+      db.saveLearningRecord(record);
+      // Immediate cloud sync
+      saveFlashcard(record, newItem as ChunkItem).catch(err => {
+        console.warn('[DEBUG] Firebase sync failed on creation:', err);
+      });
     }
 
     return newItem.id;

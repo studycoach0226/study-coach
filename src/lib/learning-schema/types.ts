@@ -110,6 +110,8 @@ export interface BaseLearningRecord {
   studentChineseExplanationAudio?: string;
   aiFeedback?: string;
   highlightedIssues?: string[];
+  encodingStatus?: 'pending' | 'done';
+  isConnectionBuilt?: boolean; // Keep for backward compatibility/reference
   googleSheetLoggedAt?: number;
 }
 

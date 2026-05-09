@@ -4,6 +4,7 @@ import { db } from '../lib/db';
 import { LearningItem, StudentLearningRecord, ConnectionFields, ChunkItem, ChunkRecord } from '../lib/types';
 import AudioRecorder from '../components/AudioRecorder';
 import { playUnifiedAudio } from '../lib/audioUtils';
+import { saveFlashcard, deleteFlashcardFromCloud } from '../lib/firebaseDb';
 
 export default function WordCard() {
   const { id: itemId } = useParams();
@@ -163,12 +164,28 @@ export default function WordCard() {
     }
     if (generatedChunk) handleAcceptGenerated();
 
-    db.saveLearningRecord(chunkRecord);
+    const updatedRecord: ChunkRecord = {
+      ...chunkRecord,
+      encodingStatus: obStatus.isValid ? 'done' : 'pending',
+      isConnectionBuilt: obStatus.isValid,
+      encodingCompleted: obStatus.isValid,
+      updatedAt: Date.now()
+    };
+    
+    db.saveLearningRecord(updatedRecord);
+    
+    // Cloud sync
+    saveFlashcard(updatedRecord, chunkItem).catch(err => {
+      console.warn('[DEBUG] Firebase sync failed in WordCard save:', err);
+    });
+
+    setRecord(updatedRecord);
     setSaveMessage('Card saved! Onboarding status has been re-evaluated.');
     setTimeout(() => setSaveMessage(''), 3000);
   };
 
   const handleDeleteConfirm = () => {
+    deleteFlashcardFromCloud(chunkRecord.studentId, chunkRecord.learningItemId).catch(() => {});
     db.deleteLearningRecord(chunkRecord.id);
     navigate(`/student/${studentId}`);
   };

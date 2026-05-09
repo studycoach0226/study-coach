@@ -4,6 +4,7 @@ import {
   query,
   where,
   getDocs,
+  getDoc,
   doc,
   setDoc,
   deleteDoc,
@@ -37,6 +38,26 @@ export async function saveFlashcard(record: ChunkRecord, item: ChunkItem) {
     // 2. Skip Upload Image (Temporary Debug)
     let imageUrl = '';
 
+    // Determine encoding status
+    const status = record.encodingStatus || (record.encodingCompleted ? 'done' : 'pending');
+
+    // Use a composite ID to ensure upsert behavior and avoid duplicates
+    const docId = `${record.studentId}_${record.learningItemId}`;
+    const docRef = doc(firestore, 'learningRecords', docId);
+
+    // Safety Requirement: Do not overwrite completed records with pending
+    if (status === 'pending') {
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        const existingData = docSnap.data();
+        const existingStatus = existingData.encodingStatus || (existingData.encodingCompleted || existingData.isConnectionBuilt ? 'done' : 'pending');
+        if (existingStatus === 'done') {
+          console.log('[DEBUG] Existing record is "done", skipping overwrite with "pending"');
+          return docId;
+        }
+      }
+    }
+
     // 3. Prepare flattened document for Firestore as requested
     const firestoreData = {
       studentId: record.studentId,
@@ -45,6 +66,9 @@ export async function saveFlashcard(record: ChunkRecord, item: ChunkItem) {
       meaning: record.studentConnections.customTranslation || item.chunkTranslation,
       pronunciation: record.studentConnections.pronunciation || item.pronunciation || '',
       learningMode: item.languageDirection === 'zh-en' ? 'chineseLearner' : 'englishLearner',
+      encodingStatus: status,
+      encodingCompleted: status === 'done',
+      isConnectionBuilt: status === 'done', // Requirement: Keep isConnectionBuilt in sync
       connections: {
         looksLike: record.studentConnections.looksLike || '',
         soundsLike: record.studentConnections.soundsLike || '',
@@ -65,10 +89,6 @@ export async function saveFlashcard(record: ChunkRecord, item: ChunkItem) {
       // Keep original record ID for lookup during updates
       localRecordId: record.id
     };
-
-    // Use a composite ID to ensure upsert behavior and avoid duplicates
-    const docId = `${record.studentId}_${record.learningItemId}`;
-    const docRef = doc(firestore, 'learningRecords', docId);
 
     console.log(`[DEBUG] Writing document to learningRecords`);
     console.log(`[DEBUG] Attempting to save to Firestore. Collection: 'learningRecords', Doc ID: '${docId}', Student ID: '${record.studentId}', Item ID: '${record.learningItemId}'`);
@@ -124,12 +144,12 @@ export async function deleteFlashcardFromCloud(studentId: string, learningItemId
     try {
       const folderPath = `studentAudio/${studentId}/${learningItemId}`;
       const folderRef = ref(storage, folderPath);
-      const listResult = await listAll(folderRef);
+      const listAllItems = await listAll(folderRef);
       
-      const deletePromises = listResult.items.map(itemRef => deleteObject(itemRef));
+      const deletePromises = listAllItems.items.map(itemRef => deleteObject(itemRef));
       await Promise.all(deletePromises);
       
-      console.log(`[DEBUG] Storage cleanup success for: ${folderPath} (${listResult.items.length} files)`);
+      console.log(`[DEBUG] Storage cleanup success for: ${folderPath} (${listAllItems.items.length} files)`);
     } catch (storageError) {
       // Requirement: If Storage delete fails, do NOT block flashcard deletion.
       console.warn('[DEBUG] Storage cleanup failed (non-blocking):', storageError);
@@ -144,6 +164,9 @@ export async function deleteFlashcardFromCloud(studentId: string, learningItemId
  * expected by the application UI components.
  */
 export function mapFirestoreToLocal(docData: any): { item: ChunkItem, record: ChunkRecord } {
+  // Backward compatibility: If encodingStatus is missing, infer it
+  const derivedStatus = docData.encodingStatus || (docData.encodingCompleted || docData.isConnectionBuilt ? 'done' : 'pending');
+
   const item: ChunkItem = {
     id: docData.learningItemId,
     itemType: 'chunk',
@@ -166,9 +189,11 @@ export function mapFirestoreToLocal(docData: any): { item: ChunkItem, record: Ch
     id: docData.localRecordId || docData.firestoreId,
     studentId: docData.studentId,
     learningItemId: docData.learningItemId,
-    status: 'completed',
+    status: derivedStatus === 'done' ? 'completed' : 'new',
     savedToLibrary: true,
-    encodingCompleted: true,
+    encodingCompleted: derivedStatus === 'done',
+    encodingStatus: derivedStatus,
+    isConnectionBuilt: derivedStatus === 'done',
     studentConnections: {
       ...docData.connections,
       imageUrl: docData.imageUrl || '',

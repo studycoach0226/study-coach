@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { db } from '../lib/db';
 import { assignmentStore } from '../lib/retrievable/assignmentStore';
-import { LearningItem, ChunkItem } from '../lib/types';
+import { LearningItem, ChunkItem, ChunkRecord } from '../lib/types';
+import { saveFlashcard } from '../lib/firebaseDb';
 
 export default function StudentAssignments() {
   const navigate = useNavigate();
@@ -52,8 +53,19 @@ export default function StudentAssignments() {
 
     const count = selectedIds.size;
     selectedIds.forEach(id => {
+      // Safety Requirement: Preserve existing records and only create missing ones
+      const existing = db.getLearningRecord(sId, id);
+      if (existing) {
+        console.log(`[DEBUG] Record already exists for item ${id}, skipping creation.`);
+        assignmentStore.removeContent(sId, id);
+        return;
+      }
+
+      const item = assignedItems.find(i => i.id === id);
+      if (!item) return;
+
       // Create student learning record
-      db.saveLearningRecord({
+      const record: ChunkRecord = {
         id: 'lr_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
         studentId: sId,
         learningItemId: id,
@@ -61,10 +73,20 @@ export default function StudentAssignments() {
         audioUrls: {},
         status: 'new',
         encodingCompleted: false,
+        encodingStatus: 'pending',
+        isConnectionBuilt: false,
         savedToLibrary: true,
         startedAt: Date.now(),
         updatedAt: Date.now()
+      };
+
+      db.saveLearningRecord(record);
+      
+      // Immediate cloud sync
+      saveFlashcard(record, item as ChunkItem).catch(err => {
+        console.warn('[DEBUG] Firebase sync failed on assignment collection:', err);
       });
+
       // Consume assignment
       assignmentStore.removeContent(sId, id);
     });
