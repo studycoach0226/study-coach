@@ -1,14 +1,17 @@
 export type LanguageDirection = 'en-zh' | 'zh-en';
 
-export interface AiConnection {
+export interface SelectedConnection {
   id: string;
-  type: string;
-  relationshipTag: string;
+  type: string; // The primary category
+  relationshipTag: string; // The specific tag or custom tag
   noteLine: string;
-  explanation: string;
+  explanation?: string; // Optional teacher explanation
   optionalPronunciation?: string;
   optionalMeaning?: string;
   studentComment?: string;
+  source: 'ai' | 'manual';
+  createdAt?: number;
+  updatedAt?: number;
 }
 
 export interface ConnectionFields {
@@ -26,7 +29,7 @@ export interface ConnectionFields {
   imageNote?: string;
   pronunciation?: string;
   sentenceMeaning?: string;
-  aiConnections?: AiConnection[];
+  selectedConnections?: SelectedConnection[];
 }
 
 export interface BaseLearningItem {

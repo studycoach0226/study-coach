@@ -57,6 +57,7 @@ export async function saveFlashcard(record: ChunkRecord, item: ChunkItem) {
       },
       context: record.studentConnections.customChunk || item.chunk,
       contextMeaning: record.studentConnections.sentenceMeaning || item.sentenceMeaning || '',
+      selectedConnections: record.studentConnections.selectedConnections || [],
       audioUrls, // Empty
       imageUrl,  // Empty
       createdAt: serverTimestamp(),
@@ -170,7 +171,8 @@ export function mapFirestoreToLocal(docData: any): { item: ChunkItem, record: Ch
     encodingCompleted: true,
     studentConnections: {
       ...docData.connections,
-      imageUrl: docData.imageUrl || ''
+      imageUrl: docData.imageUrl || '',
+      selectedConnections: docData.selectedConnections || []
     },
     audioUrls: docData.audioUrls || {},
     startedAt: docData.createdAt?.toMillis ? docData.createdAt.toMillis() : Date.now(),

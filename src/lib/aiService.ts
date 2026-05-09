@@ -4,7 +4,7 @@ import { buildReadingExplainPrompt } from "./prompts/readingExplainPrompt";
 import { buildReadingReadPrompt } from "./prompts/readingReadPrompt";
 import { retrievalSelfTestPrompt } from "./prompts/retrievalSelfTestPrompt";
 import { connectionSuggestionsPrompt } from "./prompts/connectionSuggestionsPrompt";
-import { AiConnection } from "./learning-schema/types";
+import { SelectedConnection } from "./learning-schema/types";
 
 /**
  * Generates a contextual Chinese meaning for a given word within an article.
@@ -292,7 +292,7 @@ export async function generateConnectionSuggestions(params: {
   chunk: string;
   sentence: string;
   knownWords: string[];
-}): Promise<Omit<AiConnection, 'id'>[]> {
+}): Promise<Omit<SelectedConnection, 'id' | 'source' | 'createdAt' | 'updatedAt' | 'studentComment'>[]> {
   const apiKey = (import.meta as any).env.VITE_OPENAI_API_KEY;
 
   if (!apiKey || apiKey === 'your_api_key_here') {

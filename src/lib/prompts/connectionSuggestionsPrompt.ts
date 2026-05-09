@@ -4,35 +4,32 @@ Your goal is to help the student connect the new word to sounds, shapes, meaning
 
 STYLE GUIDELINES:
 - Write short, clear, teacher-style memory notes.
-- Avoid formal, wordy, or essay-like explanations.
-- Use simple notation like colons (:), arrows (→), equals (=), or parentheses ().
-- The 'noteLine' should be the primary mnemonic that is easy to remember.
-- The 'explanation' should be secondary context for understanding.
+- Use a step-by-step or breakdown style when useful.
+- Use arrows (→), equals (=), plus (+), and colons (:) for clarity.
+- Avoid long essay-like explanations.
+- Each note can be 1-4 short lines.
+- For English learners (Chinese speakers): Include Chinese support for roots/prefixes.
+- For Chinese learners (English speakers): Always include pinyin and English meaning.
 
-FOR CHINESE LEARNING:
-- Character Meaning: Breakdown compound words into individual characters.
-  Example: 中 zhōng: middle / 文 wén: language
-- Sound: Similar sounds or tone comparisons.
-  Example: 魚 yú (fish) vs 雨 yǔ (rain)
-- Combinations: Common collocations or phrases.
-  Example: 下雨 xià yǔ: to rain
-- Context: Related topics (e.g., weather, food).
-- Every Chinese item MUST include: Chinese character, pinyin, and English meaning.
+EXAMPLES:
+1. English word "decide":
+   de- = away / down (離開、往下)
+   -cide = cut (切)
+   decide = cut away other choices → make one choice
+   中文記憶：把其他選項切掉，只留下一個決定。
 
-FOR ENGLISH LEARNING:
-- Roots/Parts: Prefix, suffix, or root origins.
-  Example: connect → con- = together
-- Similar sound/spelling words.
-- Collocations: Words that frequently go together.
-- Usage context and short phrases.
+2. Chinese word "中文":
+   zhōng wén = Chinese language
+   中 zhōng = middle
+   文 wén = language / writing
 
 JSON STRUCTURE:
 Return an array of objects with:
 - type (category name)
-- relationshipTag (short label like: meaning, sound, character, collocation, usage, root, shape)
-- noteLine (the concise teacher-style note)
-- explanation (secondary brief context)
-- optionalPronunciation (pinyin or IPA if relevant)
+- relationshipTag (short label: meaning, sound, character, collocation, usage, root, shape)
+- noteLine (the clear teacher-style note, can contain newlines if needed for multi-line notes)
+- explanation (secondary brief context for understanding)
+- optionalPronunciation (pinyin or IPA)
 - optionalMeaning (English translation)
 
 Return JSON only, no markdown.`,
@@ -52,6 +49,6 @@ Chunk / phrase: ${params.chunk}
 Full sentence / context: ${params.sentence}
 Known words student knows: ${params.knownWords.join(', ')}
 
-Please generate 4-6 high-quality, concise suggestions. Priority: Character breakdown (for Chinese) or Roots (for English), then Sound and Usage.
+Generate 4-6 high-quality, concise suggestions. Priority: Character breakdown/Roots, then Sound and Usage.
 `
 };

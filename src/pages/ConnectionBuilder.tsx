@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { db } from '../lib/db';
-import { LearningItem, StudentLearningRecord, ConnectionFields, ChunkItem, ChunkRecord, AiConnection } from '../lib/types';
+import { LearningItem, StudentLearningRecord, ConnectionFields, ChunkItem, ChunkRecord, SelectedConnection } from '../lib/types';
 import AudioRecorder from '../components/AudioRecorder';
 import { playUnifiedAudio } from '../lib/audioUtils';
 import { saveFlashcard } from '../lib/firebaseDb';
@@ -16,6 +16,8 @@ type MissionErrorCode =
   | 'STUDENT_WORD_NOT_FOUND'
   | 'MISSING_REQUIRED_FIELDS'
   | 'UNKNOWN_ERROR';
+
+const PRESET_TAGS = ['meaning', 'sound', 'character', 'collocation', 'usage', 'root', 'shape'];
 
 export default function ConnectionBuilder() {
   const navigate = useNavigate();
@@ -52,7 +54,7 @@ export default function ConnectionBuilder() {
   const [saveError, setSaveError] = useState<string | null>(null);
 
   // AI Connection Suggestions State
-  const [aiSuggestions, setAiSuggestions] = useState<AiConnection[]>([]);
+  const [aiSuggestions, setAiSuggestions] = useState<SelectedConnection[]>([]);
   const [isAiSuggestionsLoading, setIsAiSuggestionsLoading] = useState(false);
   const [editingConnectionIds, setEditingConnectionIds] = useState<Set<string>>(new Set());
 
@@ -188,7 +190,11 @@ export default function ConnectionBuilder() {
         knownWords: knownWords.slice(0, 20) 
       });
 
-      setAiSuggestions(suggestions.map((s, idx) => ({ ...s, id: 'ai_' + idx + '_' + Date.now() })));
+      setAiSuggestions(suggestions.map((s, idx) => ({ 
+        ...s, 
+        id: 'ai_' + idx + '_' + Date.now(),
+        source: 'ai' 
+      } as SelectedConnection)));
     } catch (error) {
       console.error('Failed to load AI suggestions:', error);
     } finally {
@@ -244,13 +250,13 @@ export default function ConnectionBuilder() {
       connections.usageContext,
       connections.story,
       connections.imageUrl,
-      ...(connections.aiConnections || [])
+      ...(connections.selectedConnections || [])
     ];
 
     // personalSentence is EXCLUDED from standard textCount calculations
     const connectionCount = validConnectionFields.filter(v => {
       if (typeof v === 'string') return !!v && v.trim() !== '';
-      return !!v; // For objects (aiConnections)
+      return !!v; // For objects (selectedConnections)
     }).length;
 
     let isValid = true;
@@ -336,17 +342,42 @@ export default function ConnectionBuilder() {
     }
   };
 
-  const handleAddSuggestion = (suggestion: Omit<AiConnection, 'id'>) => {
+  const handleAddSuggestion = (suggestion: Omit<SelectedConnection, 'id' | 'source' | 'createdAt' | 'updatedAt' | 'studentComment'>) => {
     const id = 'sel_' + Date.now();
-    const newConn: AiConnection = { ...suggestion, id, studentComment: '' };
-    const nextConns = [...(connections.aiConnections || []), newConn];
-    handleConnectionChange('aiConnections', nextConns);
+    const newConn: SelectedConnection = { 
+      ...suggestion, 
+      id, 
+      studentComment: '', 
+      source: 'ai',
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    };
+    const nextConns = [...(connections.selectedConnections || []), newConn];
+    handleConnectionChange('selectedConnections', nextConns);
+    setEditingConnectionIds(prev => new Set(prev).add(id));
+  };
+
+  const handleAddManualConnection = () => {
+    const id = 'man_' + Date.now();
+    const newConn: SelectedConnection = {
+      id,
+      type: 'Personal Connection',
+      relationshipTag: 'meaning',
+      noteLine: '',
+      explanation: '',
+      studentComment: '',
+      source: 'manual',
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    };
+    const nextConns = [...(connections.selectedConnections || []), newConn];
+    handleConnectionChange('selectedConnections', nextConns);
     setEditingConnectionIds(prev => new Set(prev).add(id));
   };
 
   const handleRemoveSelectedSuggestion = (id: string) => {
-    const nextConns = (connections.aiConnections || []).filter(s => s.id !== id);
-    handleConnectionChange('aiConnections', nextConns);
+    const nextConns = (connections.selectedConnections || []).filter(s => s.id !== id);
+    handleConnectionChange('selectedConnections', nextConns);
     setEditingConnectionIds(prev => {
       const next = new Set(prev);
       next.delete(id);
@@ -354,9 +385,9 @@ export default function ConnectionBuilder() {
     });
   };
 
-  const handleUpdateSelectedSuggestion = (id: string, updates: Partial<AiConnection>) => {
-    const nextConns = (connections.aiConnections || []).map(s => s.id === id ? { ...s, ...updates } : s);
-    handleConnectionChange('aiConnections', nextConns);
+  const handleUpdateSelectedSuggestion = (id: string, updates: Partial<SelectedConnection>) => {
+    const nextConns = (connections.selectedConnections || []).map(s => s.id === id ? { ...s, ...updates, updatedAt: Date.now() } : s);
+    handleConnectionChange('selectedConnections', nextConns);
   };
 
   const toggleEditingConnection = (id: string) => {
@@ -431,7 +462,7 @@ export default function ConnectionBuilder() {
   // 4. Ready State (Mission Flow, Single Page Layout)
   if (status !== 'ready' || !currentItem || !currentRecord) return null;
 
-  const selectedAiConnections = connections.aiConnections || [];
+  const currentSelectedConnections = connections.selectedConnections || [];
 
   return (
     <div style={{ maxWidth: '800px', margin: '2rem auto', padding: '0 1rem' }}>
@@ -641,24 +672,34 @@ export default function ConnectionBuilder() {
           
           {/* My Selected Connections Area */}
           <div style={{ marginBottom: '2rem', padding: '1.5rem', background: '#fff', borderRadius: '12px', border: '2px solid var(--primary)' }}>
-            <h4 style={{ margin: '0 0 1.5rem 0', color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              📍 My Selected Connections
-            </h4>
-            {selectedAiConnections.length === 0 ? (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+              <h4 style={{ margin: 0, color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                📍 My Selected Connections
+              </h4>
+              <button 
+                onClick={handleAddManualConnection}
+                className="btn btn-outline" 
+                style={{ fontSize: '0.85rem', padding: '0.4rem 1rem', background: 'var(--primary)', color: '#fff', border: 'none' }}
+              >
+                + Add My Own Connection
+              </button>
+            </div>
+            {currentSelectedConnections.length === 0 ? (
               <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', textAlign: 'center', fontStyle: 'italic', margin: '1rem 0' }}>
                 No suggestions selected yet. Explore teacher-style notes below!
               </p>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                {selectedAiConnections.map(s => {
+                {currentSelectedConnections.map(s => {
                   const isEditing = editingConnectionIds.has(s.id);
+                  const isManual = s.source === 'manual';
                   
                   if (!isEditing) {
                     return (
                       <div key={s.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1rem', background: '#f8fafc', borderRadius: '12px', border: '1px solid var(--border)' }}>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
                           <span style={{ fontSize: '0.65rem', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{s.relationshipTag}</span>
-                          <div style={{ fontWeight: 'bold', fontSize: '1.05rem', color: 'var(--text-main)' }}>{s.noteLine}</div>
+                          <div style={{ fontWeight: 'bold', fontSize: '1.05rem', color: 'var(--text-main)', whiteSpace: 'pre-wrap' }}>{s.noteLine || (isManual ? '(Empty Note)' : '')}</div>
                           {s.studentComment && <div style={{ fontSize: '0.85rem', color: 'var(--primary)', fontStyle: 'italic' }}>"{s.studentComment}"</div>}
                         </div>
                         <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -672,15 +713,34 @@ export default function ConnectionBuilder() {
                   return (
                     <div key={s.id} style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', padding: '1.25rem', background: '#f8fafc', borderRadius: '12px', border: '1px solid var(--primary)', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <select 
-                          style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', outline: 'none', cursor: 'pointer', padding: '0.2rem 0.5rem' }}
-                          value={s.relationshipTag}
-                          onChange={(e) => handleUpdateSelectedSuggestion(s.id, { relationshipTag: e.target.value })}
-                        >
-                          {['meaning', 'sound', 'character', 'collocation', 'usage', 'root', 'shape'].map(tag => (
-                            <option key={tag} value={tag}>{tag}</option>
-                          ))}
-                        </select>
+                        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                          <select 
+                            style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', outline: 'none', cursor: 'pointer', padding: '0.2rem 0.5rem' }}
+                            value={PRESET_TAGS.includes(s.relationshipTag) ? s.relationshipTag : 'custom'}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              if (val === 'custom') {
+                                handleUpdateSelectedSuggestion(s.id, { relationshipTag: '' });
+                              } else {
+                                handleUpdateSelectedSuggestion(s.id, { relationshipTag: val });
+                              }
+                            }}
+                          >
+                            {PRESET_TAGS.map(tag => (
+                              <option key={tag} value={tag}>{tag}</option>
+                            ))}
+                            <option value="custom">Custom Tag...</option>
+                          </select>
+                          {(!PRESET_TAGS.includes(s.relationshipTag) || s.relationshipTag === '') && (
+                            <input 
+                              placeholder="Type tag..."
+                              className="input-field"
+                              style={{ fontSize: '0.75rem', padding: '0.2rem 0.5rem', width: '100px' }}
+                              value={s.relationshipTag}
+                              onChange={(e) => handleUpdateSelectedSuggestion(s.id, { relationshipTag: e.target.value })}
+                            />
+                          )}
+                        </div>
                         <button 
                           style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 500 }}
                           onClick={() => handleRemoveSelectedSuggestion(s.id)}
@@ -692,12 +752,12 @@ export default function ConnectionBuilder() {
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
                           <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 'bold' }}>MEMORY NOTE</label>
-                          <input 
+                          <textarea 
                             className="input-field"
-                            style={{ fontWeight: 'bold', fontSize: '1.1rem', background: '#fff' }}
+                            style={{ fontWeight: 'bold', fontSize: '1.1rem', background: '#fff', minHeight: '80px' }}
                             value={s.noteLine}
                             onChange={(e) => handleUpdateSelectedSuggestion(s.id, { noteLine: e.target.value })}
-                            placeholder="Short memory note..."
+                            placeholder="Break down the word or write a mnemonic..."
                           />
                         </div>
                         
@@ -712,7 +772,7 @@ export default function ConnectionBuilder() {
                           />
                         </div>
 
-                        {s.explanation && (
+                        {!isManual && s.explanation && (
                           <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontStyle: 'italic', background: '#fff', padding: '0.75rem', borderRadius: '8px', border: '1px solid #eee' }}>
                             <span style={{ fontWeight: 'bold', color: 'var(--primary)', fontSize: '0.7rem', display: 'block', marginBottom: '0.25rem', textTransform: 'uppercase' }}>Teacher Explanation:</span>
                             {s.explanation}
@@ -749,7 +809,7 @@ export default function ConnectionBuilder() {
                 <p style={{ color: 'var(--text-muted)', textAlign: 'center', gridColumn: '1/-1' }}>No suggestions available for this word.</p>
               ) : (
                 aiSuggestions.map(item => {
-                  const isSelected = !!selectedAiConnections.find(s => s.noteLine === item.noteLine && s.relationshipTag === item.relationshipTag);
+                  const isSelected = !!currentSelectedConnections.find(s => s.noteLine === item.noteLine && s.relationshipTag === item.relationshipTag);
                   return (
                     <div 
                       key={item.id} 
@@ -795,7 +855,7 @@ export default function ConnectionBuilder() {
                         </button>
                       </div>
                       
-                      <div style={{ fontWeight: 'bold', fontSize: '1.15rem', color: 'var(--text-main)', lineHeight: '1.3' }}>
+                      <div style={{ fontWeight: 'bold', fontSize: '1.15rem', color: 'var(--text-main)', lineHeight: '1.3', whiteSpace: 'pre-wrap' }}>
                         {item.noteLine}
                       </div>
 

@@ -33,8 +33,8 @@ export function validateEncoding(record: StudentLearningRecord): {
   ];
   
   const manualCount = validConnectionFields.filter(v => !!v && typeof v === 'string' && v.trim() !== '').length;
-  const aiCount = (connections.aiConnections || []).length;
-  const totalCount = manualCount + aiCount;
+  const selectedCount = (connections.selectedConnections || []).length;
+  const totalCount = manualCount + selectedCount;
   
   if (totalCount < 2) {
     missing.push(`At least 2 connections (you have ${totalCount})`);
@@ -63,12 +63,12 @@ export function getEffectiveConnection(
  */
 export function countStudentConnections(connections: ConnectionFields): number {
   const manualFields = Object.entries(connections).filter(([key, value]) => {
-    if (key === 'imageUrl' || key === 'imageNote' || key === 'aiConnections') return false;
+    if (key === 'imageUrl' || key === 'imageNote' || key === 'selectedConnections') return false;
     return !!value;
   }).length;
   
   const hasVisual = !!(connections.imageUrl || connections.imageNote);
-  const aiCount = (connections.aiConnections || []).length;
+  const selectedCount = (connections.selectedConnections || []).length;
   
-  return manualFields + (hasVisual ? 1 : 0) + aiCount;
+  return manualFields + (hasVisual ? 1 : 0) + selectedCount;
 }
