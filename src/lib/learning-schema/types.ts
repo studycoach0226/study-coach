@@ -15,9 +15,11 @@ export interface SelectedConnection {
 }
 
 export interface ConnectionFields {
-  customChunk?: string;
-  customTranslation?: string;
   customFocusExpression?: string;
+  targetText?: string;
+  customChunk?: string;
+  contextText?: string;
+  customTranslation?: string;
   looksLike?: string;
   soundsLike?: string;
   similarMeaning?: string;
@@ -47,9 +49,11 @@ export interface BaseLearningItem {
   updatedAt: number;
 
   // Common fields (optional on base to simplify access in components)
-  chunk?: string;
-  chunkTranslation?: string;
   focusExpression?: string;
+  targetText?: string;
+  chunk?: string;
+  contextText?: string;
+  chunkTranslation?: string;
   teacherConnections?: ConnectionFields;
   title?: string;
   articleText?: string;
@@ -100,10 +104,16 @@ export interface BaseLearningRecord {
 
   // Common fields (optional on base to simplify access in components)
   studentConnections?: ConnectionFields;
+  targetText?: string;
+  contextText?: string;
   audioUrls?: {
-    word?: string;
-    chunk?: string;
-    focusExpression?: string;
+    word?: string; // Legacy
+    chunk?: string; // Legacy
+    focusExpression?: string; // Legacy
+    aiWord?: string;
+    aiChunk?: string;
+    studentWord?: string;
+    studentChunk?: string;
   };
   encodingCompleted?: boolean;
   studentEnglishReadingAudio?: string;
@@ -119,9 +129,13 @@ export interface ChunkRecord extends BaseLearningRecord {
   itemType?: 'chunk';
   studentConnections: ConnectionFields;
   audioUrls: {
-    word?: string; // Legacy: deprecated or kept if you want
-    chunk?: string;
-    focusExpression?: string;
+    word?: string; // Legacy
+    chunk?: string; // Legacy
+    focusExpression?: string; // Legacy
+    aiWord?: string;
+    aiChunk?: string;
+    studentWord?: string;
+    studentChunk?: string;
   };
   encodingCompleted: boolean;
 }

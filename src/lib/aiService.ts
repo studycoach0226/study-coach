@@ -4,6 +4,7 @@ import { buildReadingExplainPrompt } from "./prompts/readingExplainPrompt";
 import { buildReadingReadPrompt } from "./prompts/readingReadPrompt";
 import { retrievalSelfTestPrompt } from "./prompts/retrievalSelfTestPrompt";
 import { connectionSuggestionsPrompt } from "./prompts/connectionSuggestionsPrompt";
+import { chineseCharacterPrompt } from "./prompts/chineseCharacterPrompt";
 import { SelectedConnection } from "./learning-schema/types";
 
 /**
@@ -340,4 +341,42 @@ export async function generateConnectionSuggestions(params: {
   }
 }
 
+export async function generateChineseCharacters(pinyin: string): Promise<string> {
+  const apiKey = (import.meta as any).env.VITE_OPENAI_API_KEY;
 
+  if (!apiKey || apiKey === 'your_api_key_here') {
+    console.error('❌ OpenAI API Key is missing.');
+    return '';
+  }
+
+  const prompt = chineseCharacterPrompt.generate(pinyin);
+
+  try {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: 'gpt-4.1-mini',
+        messages: [
+          { role: 'system', content: chineseCharacterPrompt.system },
+          { role: 'user', content: prompt }
+        ],
+        temperature: 0.1,
+      })
+    });
+
+    if (!response.ok) {
+      console.error(`❌ OpenAI Chat Error: ${response.status}`);
+      return '';
+    }
+
+    const data = await response.json();
+    return data.choices[0].message.content.trim();
+  } catch (error) {
+    console.error('❌ AI Chinese Character Generation Error:', error);
+    return '';
+  }
+}

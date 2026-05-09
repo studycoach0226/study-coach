@@ -3,11 +3,11 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { db } from '../lib/db';
 import { LearningItem, StudentLearningRecord, ConnectionFields, ChunkItem, ChunkRecord, SelectedConnection } from '../lib/types';
 import AudioRecorder from '../components/AudioRecorder';
-import { playUnifiedAudio } from '../lib/audioUtils';
+import { playUnifiedAudio, getAvailableGenders } from '../lib/audioUtils';
 import { saveFlashcard } from '../lib/firebaseDb';
 import { getActiveEncodingFields, MediaMetadata } from '../config/encodingSchema';
 import { uploadAudioFile } from '../lib/storageUtils';
-import { generateConnectionSuggestions } from '../lib/aiService';
+import { generateConnectionSuggestions, generateChineseCharacters } from '../lib/aiService';
 
 type LoadingStatus = 'idle' | 'loading' | 'error' | 'ready';
 
@@ -33,29 +33,41 @@ export default function ConnectionBuilder() {
   const [pendingQueue, setPendingQueue] = useState<{ item: LearningItem, record: StudentLearningRecord }[]>([]);
   const [currentItem, setCurrentItem] = useState<LearningItem | null>(null);
   const [currentRecord, setCurrentRecord] = useState<StudentLearningRecord | null>(null);
+  const isChineseLearner = currentItem?.languageDirection === 'zh-en';
 
   // Section 1: Content State (Student Overrides)
   const [editableChunk, setEditableChunk] = useState('');
+  const [editableContextText, setEditableContextText] = useState('');
   const [editableTranslation, setEditableTranslation] = useState('');
   const [editableFocusExpression, setEditableFocusExpression] = useState('');
+  const [editableTargetText, setEditableTargetText] = useState('');
   const [editablePronunciation, setEditablePronunciation] = useState('');
   const [editableSentenceMeaning, setEditableSentenceMeaning] = useState('');
 
-  const [isEditingFocus, setIsEditingFocus] = useState(false);
-  const [isEditingPronunciation, setIsEditingPronunciation] = useState(false);
   const [isEditingChunk, setIsEditingChunk] = useState(false);
+  const [isEditingContextText, setIsEditingContextText] = useState(false);
   const [isEditingTranslation, setIsEditingTranslation] = useState(false);
+  const [isEditingFocus, setIsEditingFocus] = useState(false);
+  const [isEditingTargetText, setIsEditingTargetText] = useState(false);
   const [isEditingSentenceMeaning, setIsEditingSentenceMeaning] = useState(false);
 
   // Encoding Form State
   const [connections, setConnections] = useState<ConnectionFields>({});
-  const [audioUrls, setAudioUrls] = useState<{ word?: string; chunk?: string; focusExpression?: string }>({});
+  const [audioUrls, setAudioUrls] = useState<ChunkRecord['audioUrls']>({
+    aiWord: '',
+    aiChunk: '',
+    studentWord: '',
+    studentChunk: ''
+  });
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
   // AI Connection Suggestions State
   const [aiSuggestions, setAiSuggestions] = useState<SelectedConnection[]>([]);
   const [isAiSuggestionsLoading, setIsAiSuggestionsLoading] = useState(false);
+  const [voicePref, setVoicePref] = useState<'female' | 'male' | 'system'>('system');
+  const [availableGenders, setAvailableGenders] = useState<('female' | 'male')[]>(['female']);
+  const [isGeneratingCharacters, setIsGeneratingCharacters] = useState<{[key: string]: boolean}>({});
   const [editingConnectionIds, setEditingConnectionIds] = useState<Set<string>>(new Set());
 
   // Audio State (Unified)
@@ -67,9 +79,11 @@ export default function ConnectionBuilder() {
   const clearMissionState = () => {
     setCurrentItem(null);
     setCurrentRecord(null);
-    setEditableChunk('');
+     setEditableChunk('');
+    setEditableContextText('');
     setEditableTranslation('');
     setEditableFocusExpression('');
+    setEditableTargetText('');
     setEditablePronunciation('');
     setEditableSentenceMeaning('');
     setConnections({});
@@ -150,12 +164,17 @@ export default function ConnectionBuilder() {
         // Sync to auto-upload metadata states for UI feedback
         if (recordAudioFiles.chunkAudio) setSentenceUploadMetadata(recordAudioFiles.chunkAudio);
 
-        setEditableChunk(currentConns.customChunk || chunkItem.chunk);
+         setEditableChunk(currentConns.customChunk || chunkItem.chunk);
+        setEditableContextText(currentConns.contextText || (chunkItem as any).contextText || '');
         setEditableTranslation(currentConns.customTranslation || chunkItem.chunkTranslation);
         setEditableFocusExpression(currentConns.customFocusExpression || chunkItem.focusExpression || '');
+        setEditableTargetText(currentConns.targetText || (chunkItem as any).targetText || '');
         setEditablePronunciation(currentConns.pronunciation || chunkItem.pronunciation || '');
         setEditableSentenceMeaning(currentConns.sentenceMeaning || chunkItem.sentenceMeaning || '');
 
+        const isChineseLearner = chunkItem.languageDirection === 'zh-en';
+        const lang = isChineseLearner ? 'zh-TW' : 'en-US';
+        setAvailableGenders(getAvailableGenders(lang));
         setStatus('ready');
 
         // Trigger AI suggestions
@@ -202,20 +221,79 @@ export default function ConnectionBuilder() {
     }
   };
 
-  const playAudio = (type: 'focusExpression' | 'chunk') => {
-    let url = type === 'focusExpression' ? (audioUrls.focusExpression || audioUrls.word) : audioUrls.chunk;
+  const playAudio = (type: 'focusExpression' | 'chunk', source: 'ai' | 'student' = 'student') => {
+    let url: string | undefined;
+    const isChineseLearner = currentItem?.languageDirection === 'zh-en';
+    const lang = isChineseLearner ? 'zh-TW' : 'en-US';
     
-    // Check unified audioFiles for both types
-    if (type === 'focusExpression' && audioFiles.targetAudio?.url) {
-      url = audioFiles.targetAudio.url;
-    } else if (type === 'chunk' && audioFiles.chunkAudio?.url) {
-      url = audioFiles.chunkAudio.url;
+    if (source === 'student') {
+      // Strictly student recordings only
+      url = type === 'focusExpression' 
+        ? (audioUrls.studentWord || audioUrls.word) 
+        : (audioUrls.studentChunk || audioUrls.chunk);
+        
+      // Also check unified audioFiles state for immediate playback of new recordings
+      if (!url) {
+        if (type === 'focusExpression' && audioFiles.targetAudio?.url) {
+          url = audioFiles.targetAudio.url;
+        } else if (type === 'chunk' && audioFiles.chunkAudio?.url) {
+          url = audioFiles.chunkAudio.url;
+        }
+      }
+
+      if (url) {
+        playUnifiedAudio('', url, lang, voicePref);
+      } else {
+        alert("No recording yet. Please record first.");
+      }
+      return;
     }
 
-    const text = type === 'focusExpression' ? editableFocusExpression : editableChunk;
-    playUnifiedAudio(text, url);
+    // AI Source
+    url = type === 'focusExpression' ? audioUrls.aiWord : audioUrls.aiChunk;
+    
+    if (url) {
+      playUnifiedAudio('', url, lang, voicePref);
+      return;
+    }
+
+    // AI TTS Fallback
+    let ttsText = type === 'focusExpression' ? editableFocusExpression : editableChunk;
+    if (isChineseLearner) {
+       // Prioritize characters for Chinese TTS
+       if (type === 'focusExpression') {
+         ttsText = editableTargetText || editableFocusExpression;
+       } else {
+         ttsText = editableContextText || editableChunk;
+       }
+    }
+    
+    if (ttsText) {
+      playUnifiedAudio(ttsText, undefined, lang, voicePref);
+    }
   };
 
+
+  const handleAiGenerateCharacters = async (pinyin: string, field: 'targetText' | 'contextText') => {
+    if (!pinyin.trim()) return;
+    
+    // Don't overwrite unless empty or student confirms (we'll assume student wants it if they click)
+    const currentVal = field === 'targetText' ? editableTargetText : editableContextText;
+    if (currentVal.trim() && !confirm('Overwrite existing characters?')) return;
+
+    setIsGeneratingCharacters(prev => ({ ...prev, [field]: true }));
+    try {
+      const generated = await generateChineseCharacters(pinyin);
+      if (generated) {
+        if (field === 'targetText') setEditableTargetText(generated);
+        else setEditableContextText(generated);
+      }
+    } catch (error) {
+      console.error('Failed to generate characters:', error);
+    } finally {
+      setIsGeneratingCharacters(prev => ({ ...prev, [field]: false }));
+    }
+  };
 
   const handleConnectionChange = (field: keyof ConnectionFields, value: any) => {
     setConnections(prev => ({ ...prev, [field]: value }));
@@ -239,7 +317,9 @@ export default function ConnectionBuilder() {
     setIsSaving(true);
     setSaveError(null);
 
-    const hasTargetAudio = !!audioFiles.targetAudio?.url || !!(audioUrls.focusExpression || audioUrls.word);
+    // Requirement 4: Student recording is required, not AI.
+    // Check studentWord or legacy focusExpression/word
+    const hasStudentTargetAudio = !!(audioFiles.targetAudio?.url || audioUrls.studentWord || audioUrls.focusExpression || audioUrls.word);
 
     // Explicit array of strictly tracked 'Encoding Connections'
     const validConnectionFields = [
@@ -260,7 +340,7 @@ export default function ConnectionBuilder() {
     }).length;
 
     let isValid = true;
-    if (!hasTargetAudio) {
+    if (!hasStudentTargetAudio) {
       setSaveError('Please record audio for the Target Expression.');
       isValid = false;
     } else if (connectionCount < 2) {
@@ -274,16 +354,26 @@ export default function ConnectionBuilder() {
     const nextStudentConnections = {
       ...connections,
       customChunk: editableChunk !== chunkItem.chunk ? editableChunk : undefined,
+      contextText: editableContextText !== (chunkItem as any).contextText ? editableContextText : undefined,
       customTranslation: editableTranslation !== chunkItem.chunkTranslation ? editableTranslation : undefined,
       customFocusExpression: editableFocusExpression !== (chunkItem.focusExpression || '') ? editableFocusExpression : undefined,
+      targetText: editableTargetText !== (chunkItem as any).targetText ? editableTargetText : undefined,
       pronunciation: editablePronunciation !== (chunkItem.pronunciation || '') ? editablePronunciation : undefined,
       sentenceMeaning: editableSentenceMeaning !== (chunkItem.sentenceMeaning || '') ? editableSentenceMeaning : undefined,
+    };
+
+    // Ensure audioUrls is properly synchronized with any new uploads before saving
+    const finalAudioUrls = {
+      ...audioUrls,
+      // Ensure current uploads are reflected even if handleAutoUpload state update is pending
+      studentWord: audioFiles.targetAudio?.url || audioUrls.studentWord || audioUrls.focusExpression || audioUrls.word,
+      studentChunk: audioFiles.chunkAudio?.url || audioUrls.studentChunk || audioUrls.chunk
     };
 
     const updatedRecord: any = {
       ...chunkRecord,
       studentConnections: nextStudentConnections,
-      audioUrls,
+      audioUrls: finalAudioUrls,
       audioFiles,
       encodingCompleted: isValid,
       encodingStatus: isValid ? 'done' : 'pending',
@@ -337,6 +427,12 @@ export default function ConnectionBuilder() {
       // 3. Update local state
       setAudioFiles(prev => ({ ...prev, [type]: metadata }));
       if (type === 'chunkAudio') setSentenceUploadMetadata(metadata);
+      
+      // Update audioUrls mapping
+      setAudioUrls(prev => ({
+        ...prev,
+        [type === 'targetAudio' ? 'studentWord' : 'studentChunk']: metadata.url
+      }));
       
       console.log(`[DEBUG] Auto-Upload Metadata (${type}):`, metadata);
     } catch (err) {
@@ -503,57 +599,110 @@ export default function ConnectionBuilder() {
           </p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
             
-            {/* Pronunciation Section */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Pronunciation / Pinyin</label>
-              {isEditingPronunciation ? (
-                <input
-                  value={editablePronunciation}
-                  onChange={e => setEditablePronunciation(e.target.value)}
-                  onBlur={() => setIsEditingPronunciation(false)}
-                  className="input-field"
-                  style={{ fontSize: '1.2rem', background: '#f8fafc' }}
-                  placeholder="e.g. děng gōngchē"
-                  autoFocus
-                  onKeyDown={e => e.key === 'Enter' && setIsEditingPronunciation(false)}
-                />
-              ) : (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: '#f8fafc', padding: '0.75rem 1rem', borderRadius: '8px', border: '1px solid transparent', cursor: 'text' }} onClick={() => setIsEditingPronunciation(true)}>
-                  <span style={{ fontSize: '1.2rem', color: editablePronunciation ? 'var(--text-main)' : 'var(--text-muted)', flex: 1 }}>{editablePronunciation || 'Enter pronunciation...'}</span>
-                  <button className="btn btn-outline" style={{ padding: '0.2rem 0.5rem', fontSize: '0.8rem', background: '#fff', border: 'none', color: 'var(--text-muted)' }}>✏️</button>
-                </div>
-              )}
-            </div>
 
             {/* Target Expression Section */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
                 <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Target Expression <span style={{ color: 'var(--danger)' }}>*</span></label>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  {(audioFiles.targetAudio?.url || audioUrls.focusExpression || audioUrls.word) && <span style={{ fontSize: '0.8rem', color: 'var(--success)' }}>✓ Audio Ready</span>}
-                  <button className="btn btn-outline" style={{ borderRadius: '50%', width: '32px', height: '32px', padding: 0, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => playAudio('focusExpression')}>
-                    {(audioFiles.targetAudio?.url || audioUrls.focusExpression || audioUrls.word) ? '▶️' : '🔊'}
-                  </button>
-                  <AudioRecorder onSave={(base64) => handleAutoUpload(base64, 'targetAudio')} />
+                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                    <span>AI Voice:</span>
+                    <select 
+                      value={voicePref} 
+                      onChange={(e) => setVoicePref(e.target.value as any)}
+                      style={{ padding: '0.2rem', borderRadius: '4px', border: '1px solid var(--border)', fontSize: '0.75rem' }}
+                    >
+                      <option value="system">System</option>
+                      <option value="female">Female</option>
+                      <option value="male">Male</option>
+                    </select>
+                  </div>
+                  {/* AI Audio Model */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>AI:</span>
+                    <button 
+                      className="btn btn-outline" 
+                      style={{ borderRadius: '50%', width: '32px', height: '32px', padding: 0, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: audioUrls.aiWord ? '#eff6ff' : '#fff' }} 
+                      onClick={() => playAudio('focusExpression', 'ai')}
+                      title="Listen to AI voice"
+                    >
+                      {audioUrls.aiWord ? '🤖' : '🔊'}
+                    </button>
+                  </div>
+                  
+                  {/* Student Audio Practice */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Me:</span>
+                    <button 
+                      className="btn btn-outline" 
+                      style={{ borderRadius: '50%', width: '32px', height: '32px', padding: 0, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: (audioFiles.targetAudio?.url || audioUrls.studentWord || audioUrls.focusExpression || audioUrls.word) ? '#f0fdf4' : '#fff' }} 
+                      onClick={() => playAudio('focusExpression', 'student')}
+                      title="Play my voice"
+                    >
+                      {(audioFiles.targetAudio?.url || audioUrls.studentWord || audioUrls.focusExpression || audioUrls.word) ? '▶️' : '🎤'}
+                    </button>
+                    <AudioRecorder onSave={(base64) => handleAutoUpload(base64, 'targetAudio')} />
+                  </div>
                 </div>
               </div>
-              {isEditingFocus ? (
-                <input
-                  value={editableFocusExpression}
-                  onChange={e => setEditableFocusExpression(e.target.value)}
-                  onBlur={() => setIsEditingFocus(false)}
-                  className="input-field"
-                  style={{ fontSize: '1.5rem', background: '#f8fafc', fontWeight: 'bold' }}
-                  placeholder="e.g. key phrase to remember"
-                  autoFocus
-                  onKeyDown={e => e.key === 'Enter' && setIsEditingFocus(false)}
-                />
-              ) : (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: '#f8fafc', padding: '0.75rem 1rem', borderRadius: '8px', border: '1px solid transparent', cursor: 'text' }} onClick={() => setIsEditingFocus(true)}>
-                  <span style={{ fontSize: '1.5rem', fontWeight: 'bold', flex: 1 }}>{editableFocusExpression || <span style={{ color: 'var(--text-muted)' }}>Empty...</span>}</span>
-                  <button className="btn btn-outline" style={{ padding: '0.2rem 0.5rem', fontSize: '0.8rem', background: '#fff', border: 'none', color: 'var(--text-muted)' }}>✏️</button>
+              
+              <div style={{ display: 'grid', gridTemplateColumns: isChineseLearner ? '1fr 1fr' : '1fr', gap: '1rem' }}>
+                {/* Target Expression (Primary) */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                  {isChineseLearner && <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 'bold', textTransform: 'uppercase' }}>Pinyin / Readable</span>}
+                  {isEditingFocus ? (
+                    <input
+                      value={editableFocusExpression}
+                      onChange={e => setEditableFocusExpression(e.target.value)}
+                      onBlur={() => setIsEditingFocus(false)}
+                      className="input-field"
+                      style={{ fontSize: isChineseLearner ? '1.25rem' : '1.5rem', background: '#f8fafc', fontWeight: 'bold' }}
+                      placeholder="e.g. pinyin form"
+                      autoFocus
+                      onKeyDown={e => e.key === 'Enter' && setIsEditingFocus(false)}
+                    />
+                  ) : (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: '#f8fafc', padding: '0.75rem 1rem', borderRadius: '8px', border: '1px solid transparent', cursor: 'text' }} onClick={() => setIsEditingFocus(true)}>
+                      <span style={{ fontSize: isChineseLearner ? '1.25rem' : '1.5rem', fontWeight: 'bold', flex: 1 }}>{editableFocusExpression || <span style={{ color: 'var(--text-muted)' }}>Empty...</span>}</span>
+                      <button className="btn btn-outline" style={{ padding: '0.2rem 0.5rem', fontSize: '0.8rem', background: '#fff', border: 'none', color: 'var(--text-muted)' }}>✏️</button>
+                    </div>
+                  )}
                 </div>
-              )}
+
+                {/* Target Text (Characters - Chinese Learners only) */}
+                {isChineseLearner && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 'bold', textTransform: 'uppercase' }}>Chinese Characters</span>
+                      <button 
+                        className="btn btn-outline" 
+                        style={{ fontSize: '0.65rem', padding: '0.1rem 0.4rem', background: '#eff6ff', color: 'var(--primary)', border: '1px solid #dbeafe' }}
+                        onClick={() => handleAiGenerateCharacters(editableFocusExpression, 'targetText')}
+                        disabled={isGeneratingCharacters['targetText']}
+                      >
+                        {isGeneratingCharacters['targetText'] ? '⌛...' : '✨ Generate'}
+                      </button>
+                    </div>
+                    {isEditingTargetText ? (
+                      <input
+                        value={editableTargetText}
+                        onChange={e => setEditableTargetText(e.target.value)}
+                        onBlur={() => setIsEditingTargetText(false)}
+                        className="input-field"
+                        style={{ fontSize: '1.25rem', background: '#f8fafc', fontWeight: 'bold' }}
+                        placeholder="e.g. 漢字"
+                        autoFocus
+                        onKeyDown={e => e.key === 'Enter' && setIsEditingTargetText(false)}
+                      />
+                    ) : (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: '#f8fafc', padding: '0.75rem 1rem', borderRadius: '8px', border: '1px solid transparent', cursor: 'text' }} onClick={() => setIsEditingTargetText(true)}>
+                        <span style={{ fontSize: '1.25rem', fontWeight: 'bold', flex: 1 }}>{editableTargetText || <span style={{ color: 'var(--text-muted)' }}>Empty...</span>}</span>
+                        <button className="btn btn-outline" style={{ padding: '0.2rem 0.5rem', fontSize: '0.8rem', background: '#fff', border: 'none', color: 'var(--text-muted)' }}>✏️</button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Meaning Section */}
@@ -583,31 +732,91 @@ export default function ConnectionBuilder() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
                   <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Sentence / Context <span style={{ fontWeight: 'normal', color: 'var(--text-muted)' }}>(Optional Audio)</span></label>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    {(sentenceUploadMetadata?.url || audioUrls.chunk) && <span style={{ fontSize: '0.8rem', color: 'var(--success)' }}>✓ Audio Ready</span>}
-                    <button className="btn btn-outline" style={{ borderRadius: '50%', width: '32px', height: '32px', padding: 0, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => playAudio('chunk')}>
-                      {(sentenceUploadMetadata?.url || audioUrls.chunk) ? '▶️' : '🔊'}
-                    </button>
-                    <AudioRecorder onSave={(base64) => handleAutoUpload(base64, 'chunkAudio')} />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                    {/* AI Audio Model */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>AI:</span>
+                      <button 
+                        className="btn btn-outline" 
+                        style={{ borderRadius: '50%', width: '32px', height: '32px', padding: 0, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: audioUrls.aiChunk ? '#eff6ff' : '#fff' }} 
+                        onClick={() => playAudio('chunk', 'ai')}
+                        title="Listen to AI voice"
+                      >
+                        {audioUrls.aiChunk ? '🤖' : '🔊'}
+                      </button>
+                    </div>
+
+                    {/* Student Audio Practice */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Me:</span>
+                      <button 
+                        className="btn btn-outline" 
+                        style={{ borderRadius: '50%', width: '32px', height: '32px', padding: 0, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: (sentenceUploadMetadata?.url || audioUrls.studentChunk || audioUrls.chunk) ? '#f0fdf4' : '#fff' }} 
+                        onClick={() => playAudio('chunk', 'student')}
+                        title="Play my voice"
+                      >
+                        {(sentenceUploadMetadata?.url || audioUrls.studentChunk || audioUrls.chunk) ? '▶️' : '🎤'}
+                      </button>
+                      <AudioRecorder onSave={(base64) => handleAutoUpload(base64, 'chunkAudio')} />
+                    </div>
                   </div>
                 </div>
-                {isEditingChunk ? (
-                  <input
-                    value={editableChunk}
-                    onChange={e => setEditableChunk(e.target.value)}
-                    onBlur={() => setIsEditingChunk(false)}
-                    className="input-field"
-                    style={{ fontStyle: 'italic', fontSize: '1.1rem', background: '#fff' }}
-                    placeholder={(currentItem as ChunkItem).chunk}
-                    autoFocus
-                    onKeyDown={e => e.key === 'Enter' && setIsEditingChunk(false)}
-                  />
-                ) : (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: '#fff', padding: '0.75rem 1rem', borderRadius: '8px', border: '1px solid var(--border)', cursor: 'text' }} onClick={() => setIsEditingChunk(true)}>
-                    <span style={{ fontSize: '1.1rem', fontStyle: 'italic', flex: 1 }}>{editableChunk || <span style={{ color: 'var(--text-muted)' }}>Empty...</span>}</span>
-                    <button className="btn btn-outline" style={{ padding: '0.2rem 0.5rem', fontSize: '0.8rem', background: '#fff', border: 'none', color: 'var(--text-muted)' }}>✏️</button>
+                
+                <div style={{ display: 'grid', gridTemplateColumns: isChineseLearner ? '1fr 1fr' : '1fr', gap: '1rem' }}>
+                  {/* Sentence (Primary) */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                    {isChineseLearner && <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 'bold', textTransform: 'uppercase' }}>Pinyin Sentence</span>}
+                    {isEditingChunk ? (
+                      <textarea
+                        value={editableChunk}
+                        onChange={e => setEditableChunk(e.target.value)}
+                        onBlur={() => setIsEditingChunk(false)}
+                        className="input-field"
+                        style={{ fontSize: '1.1rem', background: '#fff', minHeight: '80px' }}
+                        placeholder="e.g. pinyin sentence"
+                        autoFocus
+                      />
+                    ) : (
+                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', background: '#fff', padding: '0.75rem 1rem', borderRadius: '8px', border: '1px solid transparent', cursor: 'text', minHeight: '80px' }} onClick={() => setIsEditingChunk(true)}>
+                        <span style={{ fontSize: '1.1rem', flex: 1, color: editableChunk ? 'var(--text-main)' : 'var(--text-muted)' }}>{editableChunk || 'Enter sentence...'}</span>
+                        <button className="btn btn-outline" style={{ padding: '0.2rem 0.5rem', fontSize: '0.8rem', background: '#fff', border: 'none', color: 'var(--text-muted)' }}>✏️</button>
+                      </div>
+                    )}
                   </div>
-                )}
+
+                  {/* Context Text (Characters - Chinese Learners only) */}
+                  {isChineseLearner && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 'bold', textTransform: 'uppercase' }}>Chinese Sentence</span>
+                      <button 
+                        className="btn btn-outline" 
+                        style={{ fontSize: '0.65rem', padding: '0.1rem 0.4rem', background: '#eff6ff', color: 'var(--primary)', border: '1px solid #dbeafe' }}
+                        onClick={() => handleAiGenerateCharacters(editableChunk, 'contextText')}
+                        disabled={isGeneratingCharacters['contextText']}
+                      >
+                        {isGeneratingCharacters['contextText'] ? '⌛...' : '✨ Generate'}
+                      </button>
+                    </div>
+                      {isEditingContextText ? (
+                        <textarea
+                          value={editableContextText}
+                          onChange={e => setEditableContextText(e.target.value)}
+                          onBlur={() => setIsEditingContextText(false)}
+                          className="input-field"
+                          style={{ fontSize: '1.1rem', background: '#fff', minHeight: '80px' }}
+                          placeholder="e.g. 漢字句子"
+                          autoFocus
+                        />
+                      ) : (
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', background: '#fff', padding: '0.75rem 1rem', borderRadius: '8px', border: '1px solid transparent', cursor: 'text', minHeight: '80px' }} onClick={() => setIsEditingContextText(true)}>
+                          <span style={{ fontSize: '1.1rem', flex: 1, color: editableContextText ? 'var(--text-main)' : 'var(--text-muted)' }}>{editableContextText || 'Enter characters...'}</span>
+                          <button className="btn btn-outline" style={{ padding: '0.2rem 0.5rem', fontSize: '0.8rem', background: '#fff', border: 'none', color: 'var(--text-muted)' }}>✏️</button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                 <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Sentence Meaning</label>
@@ -633,10 +842,10 @@ export default function ConnectionBuilder() {
           </div>
         </section>
 
-        {/* Section 2: Connections */}
+        {/* Section 2: Unified Connections */}
         <section>
           <h3 style={{ margin: '0 0 1rem 0', color: 'var(--text-main)', borderBottom: '2px solid var(--border)', paddingBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            2. Mental Connections <span style={{ fontSize: '0.9rem', color: 'var(--text-muted)', fontWeight: 'normal' }}>(Complete at least 2)</span>
+            2. Connections <span style={{ fontSize: '0.9rem', color: 'var(--text-muted)', fontWeight: 'normal' }}>(Complete at least 2)</span>
           </h3>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
@@ -655,13 +864,44 @@ export default function ConnectionBuilder() {
               <label style={{ fontSize: '0.85rem', fontWeight: 'bold', color: 'var(--text-muted)' }}>🌓 Opposite Meaning</label>
               <input className="input-field" value={connections.oppositeMeaning || ''} onChange={e => handleConnectionChange('oppositeMeaning', e.target.value)} placeholder="Antonym" />
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              <label style={{ fontSize: '0.85rem', fontWeight: 'bold', color: 'var(--text-muted)' }}>📍 Usage Context</label>
-              <input className="input-field" value={connections.usageContext || ''} onChange={e => handleConnectionChange('usageContext', e.target.value)} placeholder="When/Where do you use it?" />
-            </div>
+            
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', gridColumn: 'span 2' }}>
-              <label style={{ fontSize: '0.85rem', fontWeight: 'bold', color: 'var(--text-muted)' }}>📖 Memory Story</label>
-              <textarea className="input-field" style={{ minHeight: '80px' }} value={connections.story || ''} onChange={e => handleConnectionChange('story', e.target.value)} placeholder="A short story to remember this word" />
+              <label style={{ fontSize: '0.85rem', fontWeight: 'bold', color: 'var(--text-muted)' }}>📖 Usage Context & Memory Story</label>
+              <textarea 
+                className="input-field" 
+                style={{ minHeight: '100px' }} 
+                value={connections.story || ''} 
+                onChange={e => handleConnectionChange('story', e.target.value)} 
+                placeholder="Where do you use it? Write a short story or mnemonic context..." 
+              />
+            </div>
+
+            {/* Visual Connection (Image) Integrated into Grid */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', gridColumn: 'span 2', padding: '1.25rem', background: '#f8fafc', borderRadius: '12px', border: '1px solid var(--border)' }}>
+              <label style={{ fontSize: '0.85rem', fontWeight: 'bold', color: 'var(--text-muted)', display: 'flex', justifyContent: 'space-between' }}>
+                🖼 Visual Connection (Optional)
+                {connections.imageUrl && (
+                  <button onClick={() => handleConnectionChange('imageUrl', '')} style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', fontSize: '0.75rem' }}>🗑 Remove</button>
+                )}
+              </label>
+              <div 
+                style={{
+                  width: '100%',
+                  height: connections.imageUrl ? '240px' : '60px',
+                  borderRadius: '8px',
+                  border: '2px dashed var(--border)',
+                  background: connections.imageUrl ? `url(${connections.imageUrl}) center/contain no-repeat #fff` : '#fff',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer',
+                  transition: 'all 0.3s ease'
+                }}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                {!connections.imageUrl && <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>+ Add Image</span>}
+                <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept="image/*" onChange={handleImageUpload} />
+              </div>
             </div>
           </div>
         </section>
@@ -878,59 +1118,34 @@ export default function ConnectionBuilder() {
           )}
         </section>
 
-        {/* Section 3: Visual Connection */}
-        <section>
-          <h3 style={{ margin: '0 0 1rem 0', color: 'var(--text-main)', borderBottom: '2px solid var(--border)', paddingBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            3. Visual Connection
-          </h3>
-          <div style={{ display: 'grid', gridTemplateColumns: '250px 1fr', gap: '2rem' }}>
-            <div style={{
-              width: '250px', height: '180px', borderRadius: '12px', border: '2px dashed var(--border)',
-              background: connections.imageUrl ? `url(${connections.imageUrl}) center/cover` : '#f8fafc',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', position: 'relative'
-            }} onClick={() => fileInputRef.current?.click()}>
-              {!connections.imageUrl && <span style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Click to Upload Image</span>}
-              <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept="image/*" onChange={handleImageUpload} />
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              <label style={{ fontSize: '0.85rem', fontWeight: 'bold', color: 'var(--text-muted)' }}>Image Note</label>
-              <textarea
-                className="input-field"
-                style={{ flex: 1 }}
-                value={connections.imageNote || ''}
-                onChange={e => handleConnectionChange('imageNote', e.target.value)}
-                placeholder="Briefly describe why this image helps you remember."
-              />
-              {connections.imageUrl && (
-                <button onClick={() => handleConnectionChange('imageUrl', '')} className="btn btn-outline" style={{ background: '#fee2e2', color: '#dc2626', borderColor: '#fca5a5', width: 'fit-content' }}>
-                  🗑 Remove Image
-                </button>
-              )}
-            </div>
-          </div>
-        </section>
 
-        {/* Section 4: Generation / Try to use it */}
-        <section>
-          <h3 style={{ margin: '0 0 1rem 0', color: 'var(--text-main)', borderBottom: '2px solid var(--border)', paddingBottom: '0.5rem' }}>
-            4. Try To Use It
-          </h3>
-          <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem', fontSize: '0.95rem' }}>
-            <strong>Create your own sentence.</strong> <br />
-            Optional Hint: You can re-use the chunk pattern and just replace keywords!
-          </p>
-          <textarea
-            className="input-field"
-            style={{ width: '100%', minHeight: '100px', fontSize: '1.1rem' }}
-            value={connections.personalSentence || ''}
-            onChange={e => handleConnectionChange('personalSentence', e.target.value)}
-            placeholder="Type your sentence here..."
-          />
-        </section>
 
         {/* Save Button & Validation Feedback */}
         <div style={{ marginTop: '2rem', textAlign: 'center', padding: '2rem', background: '#f0f9ff', borderRadius: '16px' }}>
           {saveError && <p style={{ color: 'var(--danger)', fontWeight: 'bold', marginBottom: '1rem' }}>⚠️ {saveError}</p>}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem', background: '#f8fafc', padding: '0.75rem', borderRadius: '8px' }}>
+            <span style={{ fontSize: '0.9rem', fontWeight: 'bold' }}>AI Voice Preference:</span>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <button
+                onClick={() => setVoicePref('system')}
+                className={`btn ${voicePref === 'system' ? 'btn-primary' : 'btn-outline'}`}
+                style={{ padding: '0.3rem 0.6rem', fontSize: '0.8rem' }}
+              >
+                System
+              </button>
+              {availableGenders.map(g => (
+                <button
+                  key={g}
+                  onClick={() => setVoicePref(g as any)}
+                  className={`btn ${voicePref === g ? 'btn-primary' : 'btn-outline'}`}
+                  style={{ padding: '0.3rem 0.6rem', fontSize: '0.8rem', textTransform: 'capitalize' }}
+                >
+                  {g}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div style={{ display: 'flex', gap: '1.5rem', justifyContent: 'center' }}>
             <button
               className="btn btn-primary"

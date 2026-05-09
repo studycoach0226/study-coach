@@ -43,38 +43,41 @@ export default function TeacherContentBank() {
   };
 
   const handleParse = () => {
-    const blocks = bulkInput.split('---').map(b => b.trim()).filter(b => b.length > 0);
+    const lines = bulkInput.split('\n').map(l => l.trim()).filter(l => l.length > 0);
 
-    const newParsed: Partial<LearningItem>[] = blocks.map((block) => {
-      const lines = block.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    const newParsed: Partial<LearningItem>[] = lines.map((line) => {
+      const parts = line.split('|').map(p => p.trim());
       const item: any = {
         topic: 'General',
         difficulty: 'beginner',
         teacherConnections: {},
         createdBy: 'teacher',
         assignedByTeacher: true,
-        assignedToAll: true
+        assignedToAll: true,
+        itemType: 'chunk'
       };
 
-      lines.forEach(line => {
-        const separatorIndex = line.indexOf(':');
-        if (separatorIndex !== -1) {
-          const key = line.substring(0, separatorIndex).trim().toLowerCase();
-          const value = line.substring(separatorIndex + 1).trim();
+      if (parts.length === 6) {
+        // Chinese Format: targetExpression | targetText | meaning | context | contextText | contextMeaning
+        item.languageDirection = 'zh-en';
+        item.focusExpression = parts[0];
+        item.targetText = parts[1];
+        item.chunkTranslation = parts[2];
+        item.chunk = parts[3];
+        item.contextText = parts[4];
+        item.sentenceMeaning = parts[5];
+      } else if (parts.length >= 4) {
+        // English Format: targetExpression | meaning | context | contextMeaning
+        item.languageDirection = 'en-zh';
+        item.focusExpression = parts[0];
+        item.chunkTranslation = parts[1];
+        item.chunk = parts[2];
+        item.sentenceMeaning = parts[3];
+        // Handle optional columns if any
+      }
 
-          switch (key) {
-            case 'chunk': item.chunk = value; break;
-            case 'translation':
-            case 'chunktranslation': item.chunkTranslation = value; break;
-            case 'focus':
-            case 'focusexpression': item.focusExpression = value; break;
-            case 'topic': item.topic = value; break;
-            case 'difficulty': item.difficulty = value; break;
-          }
-        }
-      });
       return item;
-    });
+    }).filter(item => item.focusExpression && item.chunk);
 
     setParsedItems(newParsed);
     setImportStep('preview');
@@ -105,15 +108,15 @@ export default function TeacherContentBank() {
 
           {importStep === 'idle' ? (
             <div>
-              <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Format: Use <code>---</code> to separate records. Inside each block, use <code>key: value</code> pairs.</p>
-              <pre style={{ fontSize: '0.75rem', background: '#f8fafc', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border)' }}>
-                {`---
-chunk: Hello world.
-translation: 你好世界。
-focus: world
-topic: Greetings
----`}
-              </pre>
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                <strong>Format:</strong> One record per line, fields separated by <code>|</code> (pipe).<br/>
+                - <strong>English (4 cols):</strong> <code>targetExpression | meaning | context | contextMeaning</code><br/>
+                - <strong>Chinese (6 cols):</strong> <code>targetExpression | targetText | meaning | context | contextText | contextMeaning</code>
+              </p>
+              <div style={{ fontSize: '0.75rem', background: '#f8fafc', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border)', marginBottom: '1rem' }}>
+                <strong>Example Chinese:</strong><br/>
+                <code>deng3 gong1che1 | 等公車 | waiting for a bus | wo3 zai4 deng3 gong1che1 | 我在等公車。 | I am waiting for a bus.</code>
+              </div>
               <textarea
                 style={{ width: '100%', height: '200px', marginTop: '0.5rem', fontFamily: 'monospace' }}
                 value={bulkInput}
@@ -128,15 +131,22 @@ topic: Greetings
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--border)' }}>
-                      <th>Chunk</th><th>Translation</th><th>Topic</th>
+                      <th>Mode</th><th>Target</th><th>Meaning</th><th>Context</th>
                     </tr>
                   </thead>
                   <tbody>
                     {parsedItems.map((item, i) => (
                       <tr key={i} style={{ borderBottom: '1px solid #eee' }}>
-                        <td style={{ padding: '0.25rem' }}>{(item as any).chunk}</td>
+                        <td style={{ padding: '0.25rem', fontSize: '0.8rem' }}>{item.languageDirection === 'zh-en' ? '🇨🇳 ZH' : '🇺🇸 EN'}</td>
+                        <td style={{ padding: '0.25rem' }}>
+                          <div style={{ fontWeight: 'bold' }}>{(item as any).focusExpression}</div>
+                          {item.languageDirection === 'zh-en' && <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{(item as any).targetText}</div>}
+                        </td>
                         <td style={{ padding: '0.25rem' }}>{(item as any).chunkTranslation}</td>
-                        <td style={{ padding: '0.25rem' }}>{item.topic}</td>
+                        <td style={{ padding: '0.25rem', fontSize: '0.85rem' }}>
+                          <div>{(item as any).chunk}</div>
+                          {item.languageDirection === 'zh-en' && <div style={{ color: 'var(--text-muted)' }}>{(item as any).contextText}</div>}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -154,45 +164,120 @@ topic: Greetings
       {editingItem && (
         <div className="card" style={{ marginBottom: '2rem', border: '2px solid var(--primary)' }}>
           <h3>{editingItem.id ? 'Edit Content' : 'New Content'}</h3>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
-            <div style={{ gridColumn: 'span 2' }}>
-              <label>Context Chunk (Full Sentence or Phrase)</label>
-              <input
-                type="text"
-                value={(editingItem as any).chunk || ''}
-                onChange={e => setEditingItem({ ...editingItem, chunk: e.target.value } as any)}
-                placeholder="e.g. My name is Heidi."
-              />
+          <div style={{ marginBottom: '1.5rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border)' }}>
+            <label style={{ display: 'block', fontWeight: 'bold', marginBottom: '0.5rem' }}>Learning Mode / Language Direction</label>
+            <div style={{ display: 'flex', gap: '1rem' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                <input
+                  type="radio"
+                  name="languageDirection"
+                  checked={editingItem.languageDirection !== 'zh-en'}
+                  onChange={() => setEditingItem({ ...editingItem, languageDirection: 'en-zh' })}
+                />
+                English Learner (EN &rarr; ZH)
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                <input
+                  type="radio"
+                  name="languageDirection"
+                  checked={editingItem.languageDirection === 'zh-en'}
+                  onChange={() => setEditingItem({ ...editingItem, languageDirection: 'zh-en' })}
+                />
+                Chinese Learner (ZH &rarr; EN)
+              </label>
             </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginBottom: '1.5rem' }}>
+            {/* Target Section */}
+            <div style={{ gridColumn: editingItem.languageDirection === 'zh-en' ? 'span 2' : 'span 2', display: 'grid', gridTemplateColumns: editingItem.languageDirection === 'zh-en' ? '1fr 1fr' : '1fr', gap: '1rem' }}>
+              <div>
+                <label style={{ fontWeight: 'bold' }}>Target Expression {editingItem.languageDirection === 'zh-en' && '(Pinyin / Readable)'}</label>
+                <input
+                  type="text"
+                  className="input-field"
+                  value={(editingItem as any).focusExpression || ''}
+                  onChange={e => setEditingItem({ ...editingItem, focusExpression: e.target.value } as any)}
+                  placeholder={editingItem.languageDirection === 'zh-en' ? 'e.g. deng3 gong1che1' : 'e.g. apple'}
+                />
+              </div>
+              {editingItem.languageDirection === 'zh-en' && (
+                <div>
+                  <label style={{ fontWeight: 'bold' }}>Chinese Characters (Optional)</label>
+                  <input
+                    type="text"
+                    className="input-field"
+                    value={(editingItem as any).targetText || ''}
+                    onChange={e => setEditingItem({ ...editingItem, targetText: e.target.value } as any)}
+                    placeholder="e.g. 等公車"
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* Meaning Section */}
             <div style={{ gridColumn: 'span 2' }}>
-              <label>Chunk Translation</label>
+              <label style={{ fontWeight: 'bold' }}>Meaning {editingItem.languageDirection === 'zh-en' ? '(English)' : '(Chinese)'}</label>
               <input
                 type="text"
+                className="input-field"
                 value={(editingItem as any).chunkTranslation || ''}
                 onChange={e => setEditingItem({ ...editingItem, chunkTranslation: e.target.value } as any)}
-                placeholder="e.g. 我的名字是 Heidi。"
+                placeholder={editingItem.languageDirection === 'zh-en' ? 'e.g. waiting for a bus' : 'e.g. 蘋果'}
               />
             </div>
-            <div>
-              <label>Focus Expression (The unit being learned)</label>
+
+            {/* Context Section */}
+            <div style={{ gridColumn: 'span 2', display: 'grid', gridTemplateColumns: editingItem.languageDirection === 'zh-en' ? '1fr 1fr' : '1fr', gap: '1rem' }}>
+              <div>
+                <label style={{ fontWeight: 'bold' }}>Sentence / Context {editingItem.languageDirection === 'zh-en' && '(Pinyin)'}</label>
+                <input
+                  type="text"
+                  className="input-field"
+                  value={(editingItem as any).chunk || ''}
+                  onChange={e => setEditingItem({ ...editingItem, chunk: e.target.value } as any)}
+                  placeholder={editingItem.languageDirection === 'zh-en' ? 'e.g. wo3 zai4 deng3 gong1che1' : 'e.g. I am eating an apple.'}
+                />
+              </div>
+              {editingItem.languageDirection === 'zh-en' && (
+                <div>
+                  <label style={{ fontWeight: 'bold' }}>Chinese Sentence (Optional)</label>
+                  <input
+                    type="text"
+                    className="input-field"
+                    value={(editingItem as any).contextText || ''}
+                    onChange={e => setEditingItem({ ...editingItem, contextText: e.target.value } as any)}
+                    placeholder="e.g. 我在等公車。"
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* Sentence Meaning Section */}
+            <div style={{ gridColumn: 'span 2' }}>
+              <label style={{ fontWeight: 'bold' }}>Sentence Meaning {editingItem.languageDirection === 'zh-en' ? '(English)' : '(Chinese)'}</label>
               <input
                 type="text"
-                value={(editingItem as any).focusExpression || ''}
-                onChange={e => setEditingItem({ ...editingItem, focusExpression: e.target.value } as any)}
-                placeholder="e.g. Heidi"
+                className="input-field"
+                value={(editingItem as any).sentenceMeaning || ''}
+                onChange={e => setEditingItem({ ...editingItem, sentenceMeaning: e.target.value } as any)}
+                placeholder={editingItem.languageDirection === 'zh-en' ? 'e.g. I am waiting for a bus.' : 'e.g. 我在吃蘋果。'}
               />
             </div>
+
             <div>
-              <label>Topic</label>
+              <label style={{ fontWeight: 'bold' }}>Topic</label>
               <input
                 type="text"
+                className="input-field"
                 value={editingItem.topic || ''}
                 onChange={e => setEditingItem({ ...editingItem, topic: e.target.value })}
               />
             </div>
             <div>
-              <label>Difficulty</label>
+              <label style={{ fontWeight: 'bold' }}>Difficulty</label>
               <select
+                className="input-field"
                 value={editingItem.difficulty || 'beginner'}
                 onChange={e => setEditingItem({ ...editingItem, difficulty: e.target.value as any })}
               >
@@ -226,9 +311,15 @@ topic: Greetings
               const chunkItem = item as ChunkItem;
               return (
                 <tr key={item.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                  <td style={{ padding: '0.5rem' }}>{isChunk ? chunkItem.chunk : '(Reading Article)'}</td>
+                  <td style={{ padding: '0.5rem' }}>
+                    <div>{isChunk ? chunkItem.chunk : '(Reading Article)'}</div>
+                    {isChunk && chunkItem.contextText && <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{chunkItem.contextText}</div>}
+                  </td>
                   <td style={{ padding: '0.5rem' }}>{isChunk ? chunkItem.chunkTranslation : '(N/A)'}</td>
-                  <td style={{ padding: '0.5rem' }}>{isChunk ? chunkItem.focusExpression : '(N/A)'}</td>
+                  <td style={{ padding: '0.5rem' }}>
+                    <div style={{ fontWeight: 'bold' }}>{isChunk ? chunkItem.focusExpression : '(N/A)'}</div>
+                    {isChunk && chunkItem.targetText && <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{chunkItem.targetText}</div>}
+                  </td>
                   <td style={{ padding: '0.5rem' }}>{item.topic}</td>
                   <td style={{ padding: '0.5rem', textAlign: 'right' }}>
                     <button className="btn btn-outline" style={{ marginRight: '0.5rem' }} onClick={() => setEditingItem(item)}>Edit</button>

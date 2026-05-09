@@ -25,11 +25,12 @@ export default function FlashcardLibrary() {
   const [viewMode, setViewMode] = useState<ViewMode>('list');
 
   const [addMode, setAddMode] = useState<'none' | 'single' | 'bulk'>('none');
-  const [newChunk, setNewChunk] = useState('');
-  const [newSentence, setNewSentence] = useState('');
-  const [newTranslation, setNewTranslation] = useState('');
-  const [newSentenceMeaning, setNewSentenceMeaning] = useState('');
-  const [newPronunciation, setNewPronunciation] = useState('');
+  const [newChunk, setNewChunk] = useState(''); // Target Expression
+  const [newTargetText, setNewTargetText] = useState(''); // Chinese Characters
+  const [newSentence, setNewSentence] = useState(''); // Context
+  const [newContextText, setNewContextText] = useState(''); // Chinese Sentence
+  const [newTranslation, setNewTranslation] = useState(''); // Meaning
+  const [newSentenceMeaning, setNewSentenceMeaning] = useState(''); // Context Meaning
   const [bulkInput, setBulkInput] = useState('');
 
   const [learnerType, setLearnerType] = useState<'english' | 'chinese'>('english');
@@ -89,15 +90,16 @@ export default function FlashcardLibrary() {
     if (learnerType === 'english') {
       if (!newChunk.trim() || !newTranslation.trim()) return;
     } else {
-      if (!newPronunciation.trim() && !newChunk.trim()) return;
+      if (!newChunk.trim()) return;
       if (!newTranslation.trim()) return;
     }
 
     const newLearningItem = {
       chunk: newSentence.trim(),
+      contextText: newContextText.trim(),
       chunkTranslation: newTranslation.trim(),
       focusExpression: newChunk.trim(),
-      pronunciation: newPronunciation.trim(),
+      targetText: newTargetText.trim(),
       sentenceMeaning: newSentenceMeaning.trim(),
       languageDirection: (learnerType === 'english' ? 'en-zh' : 'zh-en') as 'en-zh' | 'zh-en',
       topic: 'Custom',
@@ -119,10 +121,11 @@ export default function FlashcardLibrary() {
 
     setAddMode('none');
     setNewChunk('');
+    setNewTargetText('');
     setNewSentence('');
+    setNewContextText('');
     setNewTranslation('');
     setNewSentenceMeaning('');
-    setNewPronunciation('');
   };
 
   const handleBulkImport = (e: React.FormEvent) => {
@@ -133,37 +136,40 @@ export default function FlashcardLibrary() {
       if (!line.trim()) return;
       const parts = line.split('|').map(p => p.trim());
       
-      let pronunciation = '';
       let targetExpression = '';
+      let targetText = '';
       let meaning = '';
-      let sentence = '';
-      let sentenceMeaning = '';
+      let context = '';
+      let contextText = '';
+      let contextMeaning = '';
 
       if (learnerType === 'english') {
-        // format: target expression | meaning | sentence | sentence meaning
+        // format: targetExpression | meaning | context | contextMeaning
         targetExpression = parts[0] || '';
         meaning = parts[1] || '';
-        sentence = parts[2] || '';
-        sentenceMeaning = parts[3] || '';
+        context = parts[2] || '';
+        contextMeaning = parts[3] || '';
         
         if (!targetExpression || !meaning) return;
       } else {
-        // format: pronunciation | target expression | meaning | sentence | sentence meaning
-        pronunciation = parts[0] || '';
-        targetExpression = parts[1] || '';
+        // format: targetExpression | targetText | meaning | context | contextText | contextMeaning
+        targetExpression = parts[0] || '';
+        targetText = parts[1] || '';
         meaning = parts[2] || '';
-        sentence = parts[3] || '';
-        sentenceMeaning = parts[4] || '';
+        context = parts[3] || '';
+        contextText = parts[4] || '';
+        contextMeaning = parts[5] || '';
 
-        if ((!pronunciation && !targetExpression) || !meaning) return;
+        if (!targetExpression || !meaning) return;
       }
 
       db.addLearningItem({
-        chunk: sentence,
-        chunkTranslation: meaning, // Map 'meaning' to chunkTranslation for now
+        chunk: context,
+        contextText: contextText,
+        chunkTranslation: meaning,
         focusExpression: targetExpression,
-        pronunciation: pronunciation,
-        sentenceMeaning: sentenceMeaning,
+        targetText: targetText,
+        sentenceMeaning: contextMeaning,
         languageDirection: learnerType === 'english' ? 'en-zh' : 'zh-en',
         topic: 'Custom Import',
         difficulty: 'beginner',
@@ -215,8 +221,7 @@ export default function FlashcardLibrary() {
         <table style={{ width: '100%', textAlign: 'left', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ borderBottom: '2px solid var(--border)', color: 'var(--text-muted)' }}>
-              {learnerType === 'chinese' && displayPrefs.showPronunciation && <th style={{ paddingBottom: '0.75rem', paddingRight: '1rem' }}>Pronunciation</th>}
-              {displayPrefs.showTargetExpression && <th style={{ paddingBottom: '0.75rem', paddingRight: '1rem' }}>Target Expression</th>}
+              {displayPrefs.showTargetExpression && <th style={{ paddingBottom: '0.75rem', paddingRight: '1rem' }}>Target Unit</th>}
               {displayPrefs.showMeaning && <th style={{ paddingBottom: '0.75rem', paddingRight: '1rem' }}>Meaning</th>}
               <th style={{ paddingBottom: '0.75rem', paddingRight: '1rem' }}>Mastery</th>
               <th style={{ paddingBottom: '0.75rem', paddingRight: '1rem' }}>Encoding</th>
@@ -229,19 +234,16 @@ export default function FlashcardLibrary() {
               const isComplete = db.isOnboardingComplete(record);
               return (
                 <tr key={record.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                  {learnerType === 'chinese' && displayPrefs.showPronunciation && (
-                    <td style={{ padding: '0.85rem 1rem 0.85rem 0', color: 'var(--text-muted)' }}>
-                      {(item as ChunkItem).pronunciation || '-'}
-                    </td>
-                  )}
                   {displayPrefs.showTargetExpression && (
-                    <td style={{ padding: '0.85rem 1rem 0.85rem 0', fontSize: '1.1rem', fontWeight: 600 }}>
-                      {(item as ChunkItem).focusExpression}
+                    <td style={{ padding: '0.85rem 1rem 0.85rem 0' }}>
+                      <div style={{ fontSize: '1.1rem', fontWeight: 600 }}>{(item as ChunkItem).focusExpression}</div>
+                      {(item as ChunkItem).targetText && <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>{(item as ChunkItem).targetText}</div>}
                     </td>
                   )}
                   {displayPrefs.showMeaning && (
                     <td style={{ color: 'var(--text-muted)', paddingRight: '1rem' }}>
-                      {(item as ChunkItem).chunkTranslation || '-'}
+                      <div style={{ fontWeight: 'bold', color: 'var(--text-main)' }}>{(item as ChunkItem).chunkTranslation || '-'}</div>
+                      {(item as ChunkItem).contextText && <div style={{ fontSize: '0.8rem', fontStyle: 'italic' }}>{(item as ChunkItem).contextText}</div>}
                     </td>
                   )}
                   <td style={{ paddingRight: '1rem' }}>
@@ -326,19 +328,18 @@ export default function FlashcardLibrary() {
               onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--border)')}
             >
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                {learnerType === 'chinese' && displayPrefs.showPronunciation && (item as ChunkItem).pronunciation && (
-                  <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
-                    {(item as ChunkItem).pronunciation}
-                  </div>
-                )}
                 {displayPrefs.showTargetExpression && (
-                  <div style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-main)' }}>
-                    {(item as ChunkItem).focusExpression}
+                  <div>
+                    <div style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-main)' }}>
+                      {(item as ChunkItem).focusExpression}
+                    </div>
+                    {(item as ChunkItem).targetText && <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>{(item as ChunkItem).targetText}</div>}
                   </div>
                 )}
                 {displayPrefs.showMeaning && (
                   <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', lineHeight: 1.4 }}>
-                    {(item as ChunkItem).chunkTranslation || '-'}
+                    <div style={{ fontWeight: 'bold' }}>{(item as ChunkItem).chunkTranslation || '-'}</div>
+                    {(item as ChunkItem).contextText && <div style={{ fontSize: '0.8rem', fontStyle: 'italic' }}>{(item as ChunkItem).contextText}</div>}
                   </div>
                 )}
               </div>
@@ -461,51 +462,79 @@ export default function FlashcardLibrary() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
               <h3 style={{ margin: 0 }}>Create New Card ({learnerType === 'english' ? 'English' : 'Chinese'})</h3>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1rem' }}>
-              {learnerType === 'chinese' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.5rem' }}>
+              {/* Target Expression Section */}
+              <div style={{ display: 'grid', gridTemplateColumns: learnerType === 'chinese' ? '1fr 1fr' : '1fr', gap: '1rem' }}>
                 <div>
-                  <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 'bold' }}>Pronunciation / Pinyin</label>
+                  <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 'bold' }}>Target Expression {learnerType === 'chinese' && '(Pinyin / Readable)'}</label>
                   <input
-                    value={newPronunciation}
-                    onChange={e => setNewPronunciation(e.target.value)}
-                    style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border)', boxSizing: 'border-box' }}
-                    placeholder="e.g. děng gōngchē"
+                    value={newChunk}
+                    onChange={e => setNewChunk(e.target.value)}
+                    className="input-field"
+                    style={{ width: '100%', boxSizing: 'border-box' }}
+                    placeholder={learnerType === 'english' ? "e.g. waiting for" : "e.g. deng3 gong1che1"}
+                    required
                   />
                 </div>
-              )}
-              <div>
-                <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 'bold' }}>Target Expression</label>
-                <input
-                  value={newChunk}
-                  onChange={e => setNewChunk(e.target.value)}
-                  style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border)', boxSizing: 'border-box' }}
-                  placeholder={learnerType === 'english' ? "e.g. waiting for" : "e.g. 等公車"}
-                />
+                {learnerType === 'chinese' && (
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 'bold' }}>Chinese Characters</label>
+                    <input
+                      value={newTargetText}
+                      onChange={e => setNewTargetText(e.target.value)}
+                      className="input-field"
+                      style={{ width: '100%', boxSizing: 'border-box' }}
+                      placeholder="e.g. 等公車"
+                    />
+                  </div>
+                )}
               </div>
+
               <div>
-                <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 'bold' }}>Meaning</label>
+                <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 'bold' }}>Meaning {learnerType === 'chinese' ? '(English)' : '(Chinese)'}</label>
                 <input
                   value={newTranslation}
                   onChange={e => setNewTranslation(e.target.value)}
-                  style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border)', boxSizing: 'border-box' }}
-                  placeholder={learnerType === 'english' ? "e.g. 等公車" : "e.g. waiting for"}
+                  className="input-field"
+                  style={{ width: '100%', boxSizing: 'border-box' }}
+                  placeholder={learnerType === 'english' ? "e.g. 等公車" : "e.g. waiting for a bus"}
+                  required
                 />
               </div>
-              <div>
-                <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 'bold' }}>Sentence / Context</label>
-                <input
-                  value={newSentence}
-                  onChange={e => setNewSentence(e.target.value)}
-                  style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border)', boxSizing: 'border-box' }}
-                  placeholder={learnerType === 'english' ? "e.g. Jimmy is waiting for a bus." : "e.g. 我在等公車。"}
-                />
+
+              {/* Context Section */}
+              <div style={{ display: 'grid', gridTemplateColumns: learnerType === 'chinese' ? '1fr 1fr' : '1fr', gap: '1rem' }}>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 'bold' }}>Sentence / Context {learnerType === 'chinese' && '(Pinyin)'}</label>
+                  <input
+                    value={newSentence}
+                    onChange={e => setNewSentence(e.target.value)}
+                    className="input-field"
+                    style={{ width: '100%', boxSizing: 'border-box' }}
+                    placeholder={learnerType === 'english' ? "e.g. Jimmy is waiting for a bus." : "e.g. wo3 zai4 deng3 gong1che1"}
+                  />
+                </div>
+                {learnerType === 'chinese' && (
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 'bold' }}>Chinese Sentence</label>
+                    <input
+                      value={newContextText}
+                      onChange={e => setNewContextText(e.target.value)}
+                      className="input-field"
+                      style={{ width: '100%', boxSizing: 'border-box' }}
+                      placeholder="e.g. 我在等公車。"
+                    />
+                  </div>
+                )}
               </div>
+
               <div>
-                <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 'bold' }}>Sentence Meaning (Optional)</label>
+                <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 'bold' }}>Sentence Meaning {learnerType === 'chinese' ? '(English)' : '(Chinese)'}</label>
                 <input
                   value={newSentenceMeaning}
                   onChange={e => setNewSentenceMeaning(e.target.value)}
-                  style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border)', boxSizing: 'border-box' }}
+                  className="input-field"
+                  style={{ width: '100%', boxSizing: 'border-box' }}
                   placeholder={learnerType === 'english' ? "e.g. Jimmy 在等公車。" : "e.g. I am waiting for a bus."}
                 />
               </div>
@@ -520,9 +549,9 @@ export default function FlashcardLibrary() {
             <h3 style={{ marginTop: 0, marginBottom: '0.5rem' }}>Bulk Import Cards ({learnerType === 'english' ? 'English' : 'Chinese'})</h3>
             <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: '1rem' }}>
               {learnerType === 'english' ? (
-                <>Format: <code>target expression | meaning | sentence | sentence meaning</code></>
+                <>Format: <code>targetExpression | meaning | context | contextMeaning</code></>
               ) : (
-                <>Format: <code>pronunciation | target expression | meaning | sentence | sentence meaning</code></>
+                <>Format: <code>targetExpression | targetText | meaning | context | contextText | contextMeaning</code></>
               )}
             </p>
             <textarea
@@ -541,7 +570,7 @@ export default function FlashcardLibrary() {
               }}
               placeholder={learnerType === 'english' 
                 ? 'waiting for | 等公車 | Jimmy is waiting for a bus. | Jimmy 在等公車' 
-                : 'děng gōngchē | 等公車 | waiting for a bus | 我在等公車。 | I am waiting for a bus.'
+                : 'deng3 gong1che1 | 等公車 | waiting for a bus | wo3 zai4 deng3 gong1che1 | 我在等公車。 | I am waiting for a bus.'
               }
             />
             <div style={{ display: 'flex', gap: '0.5rem' }}>

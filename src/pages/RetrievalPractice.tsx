@@ -33,6 +33,7 @@ export default function RetrievalPractice() {
   const [validationError, setValidationError] = useState<string | null>(null);
   const [transcript, setTranscript] = useState('');
   const [recognition, setRecognition] = useState<any>(null);
+  const [voicePref, setVoicePref] = useState<'female' | 'male' | 'system'>('system');
 
   useEffect(() => {
     const sId = db.getCurrentUserId();
@@ -273,20 +274,47 @@ export default function RetrievalPractice() {
       audio.play();
     }
   };
+  const speak = (text: string, record?: StudentLearningRecord, type: 'focusExpression' | 'chunk' | 'other' = 'other', source: 'ai' | 'student' = 'ai') => {
+    const currentItem = practiceQueue[currentIndex]?.item as ChunkItem;
+    const isChineseLearner = currentItem?.languageDirection === 'zh-en';
+    const isChineseTTS = isChineseLearner || (currentItem?.languageDirection === 'en-zh' && type === 'other' && text.match(/[\u4e00-\u9fa5]/));
+    const lang = isChineseTTS ? 'zh-TW' : 'en-US';
 
-  const speak = (text: string, record?: StudentLearningRecord, type: 'focusExpression' | 'chunk' | 'other' = 'other') => {
-    if (record && record.audioUrls) {
-      const studentUrl = type === 'focusExpression' ? (record.audioUrls.focusExpression || record.audioUrls.word) : (type === 'chunk' ? record.audioUrls.chunk : undefined);
+    if (source === 'student') {
+      const studentUrl = type === 'focusExpression' 
+        ? (record?.audioUrls?.studentWord || record?.audioUrls?.word) 
+        : (record?.audioUrls?.studentChunk || record?.audioUrls?.chunk);
+      
       if (studentUrl) {
-        playUnifiedAudio(text, studentUrl);
-        return;
+        playUnifiedAudio('', studentUrl, lang, voicePref);
+      } else {
+        alert("No recording yet. Please record first.");
+      }
+      return;
+    }
+
+    // AI Source - Strictly TTS or AI stored URL
+    const aiUrl = type === 'focusExpression' ? record?.audioUrls?.aiWord : record?.audioUrls?.aiChunk;
+    
+    if (aiUrl) {
+      playUnifiedAudio('', aiUrl, lang, voicePref);
+      return;
+    }
+
+    // AI TTS Fallback
+    let ttsText = text;
+    if (isChineseLearner) {
+      // Requirement: prioritize characters for better AI TTS quality
+      if (type === 'focusExpression') {
+        ttsText = record?.targetText || record?.studentConnections?.customFocusExpression || currentItem?.focusExpression || text;
+      } else if (type === 'chunk') {
+        ttsText = record?.contextText || record?.studentConnections?.customChunk || currentItem?.chunk || text;
       }
     }
     
-    const currentItem = practiceQueue[currentIndex]?.item;
-    const isChinese = currentItem?.languageDirection === 'zh-en' || (currentItem?.languageDirection === 'en-zh' && type === 'other' && text.match(/[\u4e00-\u9fa5]/));
-    const lang = isChinese ? 'zh-TW' : 'en-US';
-    playUnifiedAudio(text, undefined, lang);
+    if (ttsText) {
+      playUnifiedAudio(ttsText, undefined, lang, voicePref);
+    }
   };
 
 
@@ -346,12 +374,15 @@ export default function RetrievalPractice() {
     }
 
     const pinyin = (current.item as ChunkItem).teacherConnections?.pronunciation || (current.item as ChunkItem).pronunciation;
+    const targetText = (current.item as any).targetText || (current.record as any).targetText;
     const isChineseLearner = current.item.languageDirection === 'zh-en';
 
-    const formattedL2 = (isChineseLearner && pinyin) ? (
+    // Redesign formattedL2 for Chinese learners
+    const formattedL2 = isChineseLearner ? (
       <div style={{ textAlign: 'center' }}>
-        <div style={{ fontSize: '2.5rem', fontWeight: 'bold', color: 'var(--primary)', marginBottom: '0.4rem' }}>{pinyin}</div>
-        <div style={{ fontSize: '1.5rem', color: 'var(--text-muted)' }}>{l2}</div>
+        <div style={{ fontSize: '2.5rem', fontWeight: 'bold', color: 'var(--primary)', marginBottom: '0.4rem' }}>{l2}</div>
+        {targetText && <div style={{ fontSize: '1.5rem', color: 'var(--text-muted)' }}>{targetText}</div>}
+        {!targetText && pinyin && <div style={{ fontSize: '1.2rem', color: 'var(--text-muted)' }}>{pinyin}</div>}
       </div>
     ) : l2;
 
@@ -376,12 +407,15 @@ export default function RetrievalPractice() {
     }
 
     const pinyin = (current.item as ChunkItem).teacherConnections?.pronunciation || (current.item as ChunkItem).pronunciation;
+    const targetText = (current.item as any).targetText || (current.record as any).targetText;
     const isChineseLearner = current.item.languageDirection === 'zh-en';
 
-    const formattedL2 = (isChineseLearner && pinyin) ? (
+    // Redesign formattedL2 for Chinese learners
+    const formattedL2 = isChineseLearner ? (
       <div style={{ textAlign: 'center' }}>
-        <div style={{ fontSize: '2.2rem', fontWeight: 'bold', color: 'var(--primary)', marginBottom: '0.2rem' }}>{pinyin}</div>
-        <div style={{ fontSize: '1.4rem', color: 'var(--text-muted)' }}>{l2}</div>
+        <div style={{ fontSize: '2.2rem', fontWeight: 'bold', color: 'var(--primary)', marginBottom: '0.2rem' }}>{l2}</div>
+        {targetText && <div style={{ fontSize: '1.4rem', color: 'var(--text-muted)' }}>{targetText}</div>}
+        {!targetText && pinyin && <div style={{ fontSize: '1.1rem', color: 'var(--text-muted)' }}>{pinyin}</div>}
       </div>
     ) : l2;
 
@@ -503,7 +537,6 @@ export default function RetrievalPractice() {
             >
               Submit Answer
             </button>
-            <button className="btn btn-outline" style={{ background: '#fff' }} onClick={() => speak(testContent.rawPrompt, current.record)}>🔊 Listen</button>
           </div>
         </div>
       );
@@ -517,6 +550,13 @@ export default function RetrievalPractice() {
             <p style={{ margin: 0, fontWeight: 'bold', color: 'var(--text-muted)', fontSize: '0.8rem', textTransform: 'uppercase' }}>Expected Answer:</p>
             <div style={{ margin: '0.5rem 0' }}>{testContent.displayExpected}</div>
             {current.task.feedback && <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginTop: '0.5rem' }}>{current.task.feedback}</p>}
+            
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', marginTop: '1.5rem', paddingTop: '1rem', borderTop: '1px solid var(--border)' }}>
+              <button className="btn btn-outline" style={{ background: '#fff', fontSize: '0.85rem' }} onClick={() => speak(testContent.rawExpected, current.record, 'focusExpression', 'ai')}>🤖 AI Voice</button>
+              {(current.record.audioUrls?.studentWord || current.record.audioUrls?.focusExpression || current.record.audioUrls?.word) && (
+                <button className="btn btn-outline" style={{ background: '#fff', fontSize: '0.85rem' }} onClick={() => speak(testContent.rawExpected, current.record, 'focusExpression', 'student')}>🎤 My Voice</button>
+              )}
+            </div>
           </div>
         </div>
 
@@ -589,14 +629,23 @@ export default function RetrievalPractice() {
                   {fcContent.labelBack}
                 </p>
                 <div style={{ fontSize: '2rem', color: 'var(--text-main)', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100px' }}>{fcContent.back}</div>
-                <div style={{ marginTop: '3rem', display: 'flex', gap: '1rem' }}>
+                <div style={{ marginTop: '3rem', display: 'flex', gap: '0.75rem', justifyContent: 'center' }}>
                   <button
                     className="btn btn-outline"
-                    style={{ background: 'white' }}
-                    onClick={(e) => { e.stopPropagation(); speak(fcContent.audioText, current.record, fcContent.audioType); }}
+                    style={{ background: 'white', fontSize: '0.85rem', padding: '0.4rem 0.8rem' }}
+                    onClick={(e) => { e.stopPropagation(); speak(fcContent.audioText, current.record, fcContent.audioType, 'ai'); }}
                   >
-                    🔊 Listen
+                    🤖 AI Voice
                   </button>
+                  {(current.record.audioUrls?.studentWord || current.record.audioUrls?.focusExpression || current.record.audioUrls?.word) && (
+                    <button
+                      className="btn btn-outline"
+                      style={{ background: 'white', fontSize: '0.85rem', padding: '0.4rem 0.8rem' }}
+                      onClick={(e) => { e.stopPropagation(); speak(fcContent.audioText, current.record, fcContent.audioType, 'student'); }}
+                    >
+                      🎤 My Voice
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -666,6 +715,30 @@ export default function RetrievalPractice() {
                 ))}
               </div>
             </div>
+          </div>
+
+          {/* AI Voice Preference Selector */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.75rem', marginBottom: '2rem', padding: '0.5rem 1rem', background: '#f1f5f9', borderRadius: '20px' }}>
+            <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--text-muted)' }}>AI Voice:</span>
+            {(['system', 'female', 'male'] as const).map(p => (
+              <button
+                key={p}
+                onClick={() => setVoicePref(p)}
+                style={{
+                  padding: '0.2rem 0.6rem',
+                  fontSize: '0.7rem',
+                  border: 'none',
+                  borderRadius: '12px',
+                  cursor: 'pointer',
+                  background: voicePref === p ? 'var(--primary)' : 'transparent',
+                  color: voicePref === p ? '#fff' : 'var(--text-muted)',
+                  fontWeight: voicePref === p ? 'bold' : 'normal',
+                  textTransform: 'capitalize'
+                }}
+              >
+                {p}
+              </button>
+            ))}
           </div>
 
           <div className="card" style={{ textAlign: 'center', minHeight: '400px', display: 'flex', flexDirection: 'column', justifyContent: 'center', position: 'relative' }}>

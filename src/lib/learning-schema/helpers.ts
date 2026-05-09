@@ -15,7 +15,7 @@ export function validateEncoding(record: StudentLearningRecord): {
 
   const missing: string[] = [];
   
-  const hasChunkAudio = !!(record.audioUrls?.focusExpression || record.audioUrls?.word);
+  const hasChunkAudio = !!(record.audioUrls?.studentWord || record.audioUrls?.studentChunk);
   
   if (!hasChunkAudio) {
     missing.push('Chunk Pronunciation');

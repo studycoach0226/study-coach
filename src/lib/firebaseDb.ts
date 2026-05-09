@@ -32,8 +32,8 @@ export async function saveFlashcard(record: ChunkRecord, item: ChunkItem) {
   try {
     console.log('[DEBUG] Firestore-only test mode');
 
-    // 1. Skip Upload Audio Assets (Temporary Debug)
-    const audioUrls: Record<string, string> = {};
+    // 1. Audio Assets
+    const audioUrls = record.audioUrls || {};
 
     // 2. Skip Upload Image (Temporary Debug)
     let imageUrl = '';
@@ -63,6 +63,7 @@ export async function saveFlashcard(record: ChunkRecord, item: ChunkItem) {
       studentId: record.studentId,
       learningItemId: record.learningItemId,
       targetExpression: record.studentConnections.customFocusExpression || item.focusExpression,
+      targetText: record.studentConnections.targetText || item.targetText || '',
       meaning: record.studentConnections.customTranslation || item.chunkTranslation,
       pronunciation: record.studentConnections.pronunciation || item.pronunciation || '',
       learningMode: item.languageDirection === 'zh-en' ? 'chineseLearner' : 'englishLearner',
@@ -80,9 +81,10 @@ export async function saveFlashcard(record: ChunkRecord, item: ChunkItem) {
         imageNote: record.studentConnections.imageNote || ''
       },
       context: record.studentConnections.customChunk || item.chunk,
+      contextText: record.studentConnections.contextText || item.contextText || '',
       contextMeaning: record.studentConnections.sentenceMeaning || item.sentenceMeaning || '',
       selectedConnections: record.studentConnections.selectedConnections || [],
-      audioUrls, // Empty
+      audioUrls,
       imageUrl,  // Empty
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
@@ -167,14 +169,43 @@ export function mapFirestoreToLocal(docData: any): { item: ChunkItem, record: Ch
   // Backward compatibility: If encodingStatus is missing, infer it
   const derivedStatus = docData.encodingStatus || (docData.encodingCompleted || docData.isConnectionBuilt ? 'done' : 'pending');
 
+  const urls = docData.audioUrls || {};
+  // Requirement 1: map legacy to studentWord/studentChunk without deleting old fields
+  const mappedAudioUrls = {
+    ...urls,
+    studentWord: urls.studentWord || urls.focusExpression || urls.word,
+    studentChunk: urls.studentChunk || urls.chunk,
+    aiWord: urls.aiWord,
+    aiChunk: urls.aiChunk
+  };
+
+  const isChineseLearner = docData.learningMode === 'chineseLearner';
+  let focusExpression = docData.targetExpression || '';
+  let targetText = docData.targetText || '';
+  const pronunciation = docData.pronunciation || '';
+
+  if (isChineseLearner) {
+    if (!focusExpression && pronunciation) {
+      focusExpression = pronunciation;
+    } else if (focusExpression && pronunciation && !targetText) {
+      // If focusExpression contains Chinese characters, it was likely used for characters in old format
+      if (/[\u4e00-\u9fa5]/.test(focusExpression)) {
+        targetText = focusExpression;
+        focusExpression = pronunciation;
+      }
+    }
+  }
+
   const item: ChunkItem = {
     id: docData.learningItemId,
     itemType: 'chunk',
-    languageDirection: docData.learningMode === 'chineseLearner' ? 'zh-en' : 'en-zh',
-    focusExpression: docData.targetExpression,
+    languageDirection: isChineseLearner ? 'zh-en' : 'en-zh',
+    focusExpression,
+    targetText,
     chunkTranslation: docData.meaning,
     pronunciation: docData.pronunciation || '',
     chunk: docData.context,
+    contextText: docData.contextText || '',
     sentenceMeaning: docData.contextMeaning || '',
     createdBy: 'system',
     assignedByTeacher: true,
@@ -197,9 +228,16 @@ export function mapFirestoreToLocal(docData: any): { item: ChunkItem, record: Ch
     studentConnections: {
       ...docData.connections,
       imageUrl: docData.imageUrl || '',
-      selectedConnections: docData.selectedConnections || []
+      selectedConnections: docData.selectedConnections || [],
+      customFocusExpression: focusExpression,
+      targetText: targetText,
+      customChunk: docData.context,
+      contextText: docData.contextText || '',
+      customTranslation: docData.meaning,
+      pronunciation: docData.pronunciation || '',
+      sentenceMeaning: docData.contextMeaning || '',
     },
-    audioUrls: docData.audioUrls || {},
+    audioUrls: mappedAudioUrls,
     startedAt: docData.createdAt?.toMillis ? docData.createdAt.toMillis() : Date.now(),
     updatedAt: docData.updatedAt?.toMillis ? docData.updatedAt.toMillis() : Date.now(),
   };
