@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { db } from '../lib/db';
-import { LearningItem, StudentLearningRecord, ChunkItem } from '../lib/types';
+import { LearningItem, StudentLearningRecord, ChunkItem, ChunkRecord } from '../lib/types';
 import { fetchAssignmentsByStudentId } from '../lib/readingContent';
 import { deleteFlashcardFromCloud } from '../lib/firebaseDb';
 
@@ -221,8 +221,11 @@ export default function FlashcardLibrary() {
         <table style={{ width: '100%', textAlign: 'left', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ borderBottom: '2px solid var(--border)', color: 'var(--text-muted)' }}>
-              {displayPrefs.showTargetExpression && <th style={{ paddingBottom: '0.75rem', paddingRight: '1rem' }}>Target Unit</th>}
-              {displayPrefs.showMeaning && <th style={{ paddingBottom: '0.75rem', paddingRight: '1rem' }}>Meaning</th>}
+              <th style={{ paddingBottom: '0.75rem', paddingRight: '1rem' }}>Target Unit</th>
+              {learnerType === 'chinese' && displayPrefs.showTargetExpression && (
+                <th style={{ paddingBottom: '0.75rem', paddingRight: '1rem' }}>Chinese Characters</th>
+              )}
+              <th style={{ paddingBottom: '0.75rem', paddingRight: '1rem' }}>Meaning</th>
               <th style={{ paddingBottom: '0.75rem', paddingRight: '1rem' }}>Mastery</th>
               <th style={{ paddingBottom: '0.75rem', paddingRight: '1rem' }}>Encoding</th>
               <th style={{ paddingBottom: '0.75rem' }}>Action</th>
@@ -234,18 +237,19 @@ export default function FlashcardLibrary() {
               const isComplete = db.isOnboardingComplete(record);
               return (
                 <tr key={record.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                  {displayPrefs.showTargetExpression && (
+                  <td style={{ padding: '0.85rem 1rem 0.85rem 0' }}>
+                    <div style={{ fontSize: '1.1rem', fontWeight: 600 }}>{(item as ChunkItem).focusExpression}</div>
+                  </td>
+                  {learnerType === 'chinese' && displayPrefs.showTargetExpression && (
                     <td style={{ padding: '0.85rem 1rem 0.85rem 0' }}>
-                      <div style={{ fontSize: '1.1rem', fontWeight: 600 }}>{(item as ChunkItem).focusExpression}</div>
-                      {(item as ChunkItem).targetText && <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>{(item as ChunkItem).targetText}</div>}
+                      <div style={{ fontSize: '1.1rem', color: 'var(--text-main)' }}>
+                        {(record as any).targetText || (item as any).targetText || (record as ChunkRecord).studentConnections?.targetText || '-'}
+                      </div>
                     </td>
                   )}
-                  {displayPrefs.showMeaning && (
-                    <td style={{ color: 'var(--text-muted)', paddingRight: '1rem' }}>
-                      <div style={{ fontWeight: 'bold', color: 'var(--text-main)' }}>{(item as ChunkItem).chunkTranslation || '-'}</div>
-                      {(item as ChunkItem).contextText && <div style={{ fontSize: '0.8rem', fontStyle: 'italic' }}>{(item as ChunkItem).contextText}</div>}
-                    </td>
-                  )}
+                  <td style={{ color: 'var(--text-muted)', paddingRight: '1rem' }}>
+                    <div style={{ fontWeight: 'bold', color: 'var(--text-main)' }}>{(record as ChunkRecord).studentConnections?.customTranslation || (item as ChunkItem).chunkTranslation || '-'}</div>
+                  </td>
                   <td style={{ paddingRight: '1rem' }}>
                     <span className="status-badge" style={{ background: sColor.bg, color: sColor.color }}>
                       {record.status}
@@ -328,20 +332,19 @@ export default function FlashcardLibrary() {
               onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--border)')}
             >
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                {displayPrefs.showTargetExpression && (
-                  <div>
-                    <div style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-main)' }}>
-                      {(item as ChunkItem).focusExpression}
+                <div>
+                  <div style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-main)' }}>
+                    {(item as ChunkItem).focusExpression}
+                  </div>
+                  {learnerType === 'chinese' && displayPrefs.showTargetExpression && (
+                    <div style={{ fontSize: '1rem', color: 'var(--primary)', marginTop: '0.2rem', fontWeight: 'bold' }}>
+                      {(record as any).targetText || (item as any).targetText || (record as ChunkRecord).studentConnections?.targetText}
                     </div>
-                    {(item as ChunkItem).targetText && <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>{(item as ChunkItem).targetText}</div>}
-                  </div>
-                )}
-                {displayPrefs.showMeaning && (
-                  <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', lineHeight: 1.4 }}>
-                    <div style={{ fontWeight: 'bold' }}>{(item as ChunkItem).chunkTranslation || '-'}</div>
-                    {(item as ChunkItem).contextText && <div style={{ fontSize: '0.8rem', fontStyle: 'italic' }}>{(item as ChunkItem).contextText}</div>}
-                  </div>
-                )}
+                  )}
+                </div>
+                <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', lineHeight: 1.4 }}>
+                  <div style={{ fontWeight: 'bold' }}>{(record as ChunkRecord).studentConnections?.customTranslation || (item as ChunkItem).chunkTranslation || '-'}</div>
+                </div>
               </div>
               <div style={{ marginTop: '0.25rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span className="status-badge" style={{ background: sColor.bg, color: sColor.color, fontSize: '0.75rem' }}>
@@ -376,46 +379,35 @@ export default function FlashcardLibrary() {
 
       {/* Action Bar */}
       <div className="card" style={{ marginBottom: '1.5rem', padding: '1.25rem' }}>
-        <div style={{ marginBottom: '1.25rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: '1rem' }}>
-          <span style={{ fontWeight: 'bold', color: 'var(--text-muted)' }}>Learning Mode:</span>
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <button 
-              onClick={() => setLearnerType('english')}
-              className={`btn ${learnerType === 'english' ? 'btn-primary' : 'btn-outline'}`}
-              style={{ padding: '0.4rem 1rem', background: learnerType === 'english' ? '' : '#fff' }}
+        <div style={{ marginBottom: '1rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '1.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <span style={{ fontWeight: 'bold', color: 'var(--text-muted)', fontSize: '0.9rem' }}>Learning Mode:</span>
+            <select 
+              value={learnerType} 
+              onChange={(e) => setLearnerType(e.target.value as any)}
+              style={{ padding: '0.3rem 0.6rem', borderRadius: '8px', border: '1px solid var(--border)', background: '#fff', fontSize: '0.9rem', cursor: 'pointer', outline: 'none' }}
             >
-              English Learner (zh &rarr; en)
-            </button>
-            <button 
-              onClick={() => setLearnerType('chinese')}
-              className={`btn ${learnerType === 'chinese' ? 'btn-primary' : 'btn-outline'}`}
-              style={{ padding: '0.4rem 1rem', background: learnerType === 'chinese' ? '' : '#fff' }}
-            >
-              Chinese Learner (en &rarr; zh)
-            </button>
+              <option value="english">English Learner</option>
+              <option value="chinese">Chinese Learner</option>
+            </select>
           </div>
 
-          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '1rem' }}>
-            <div style={{ display: 'flex', gap: '0.75rem', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+            <div style={{ display: 'flex', gap: '1rem', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
               {learnerType === 'chinese' && (
-                <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer' }}>
-                  <input type="checkbox" checked={displayPrefs.showPronunciation} onChange={e => setDisplayPrefs({...displayPrefs, showPronunciation: e.target.checked})} />
-                  Pinyin
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={displayPrefs.showTargetExpression} onChange={e => setDisplayPrefs({...displayPrefs, showTargetExpression: e.target.checked})} />
+                  Show Chinese Characters
                 </label>
               )}
-              <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer' }}>
-                <input type="checkbox" checked={displayPrefs.showTargetExpression} onChange={e => setDisplayPrefs({...displayPrefs, showTargetExpression: e.target.checked})} />
-                Expression
-              </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer' }}>
-                <input type="checkbox" checked={displayPrefs.showMeaning} onChange={e => setDisplayPrefs({...displayPrefs, showMeaning: e.target.checked})} />
-                Meaning
-              </label>
             </div>
-            <button onClick={handleSavePreferences} className="btn btn-outline" style={{ padding: '0.4rem 0.75rem', fontSize: '0.85rem', background: '#fff' }}>
-              Save Preferences
-            </button>
-            {saveMessage && <span style={{ fontSize: '0.85rem', color: 'var(--success)', fontWeight: 600 }}>{saveMessage}</span>}
+            
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <button onClick={handleSavePreferences} className="btn btn-outline" style={{ padding: '0.3rem 0.6rem', fontSize: '0.8rem', background: '#fff', borderRadius: '6px' }}>
+                Save Prefs
+              </button>
+              {saveMessage && <span style={{ fontSize: '0.75rem', color: 'var(--success)', fontWeight: 600 }}>{saveMessage}</span>}
+            </div>
           </div>
         </div>
 

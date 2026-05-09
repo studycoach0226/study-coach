@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { db } from '../lib/db';
 import { LearningItem, StudentLearningRecord, ConnectionFields, ChunkItem, ChunkRecord, SelectedConnection } from '../lib/types';
@@ -17,7 +17,7 @@ type MissionErrorCode =
   | 'MISSING_REQUIRED_FIELDS'
   | 'UNKNOWN_ERROR';
 
-const PRESET_TAGS = ['meaning', 'sound', 'character', 'collocation', 'usage', 'root', 'shape'];
+const PRESET_TAGS = ['meaning', 'sound', 'character', 'collocation', 'usage', 'story', 'image', 'visual', 'root', 'shape', 'note'];
 
 export default function ConnectionBuilder() {
   const navigate = useNavigate();
@@ -74,7 +74,6 @@ export default function ConnectionBuilder() {
   const [sentenceUploadMetadata, setSentenceUploadMetadata] = useState<MediaMetadata | null>(null);
   const [audioFiles, setAudioFiles] = useState<{ targetAudio?: MediaMetadata; chunkAudio?: MediaMetadata }>({});
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const clearMissionState = () => {
     setCurrentItem(null);
@@ -299,18 +298,6 @@ export default function ConnectionBuilder() {
     setConnections(prev => ({ ...prev, [field]: value }));
   };
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        if (typeof reader.result === 'string') {
-          setConnections(prev => ({ ...prev, imageUrl: reader.result as string }));
-        }
-      };
-      reader.readAsDataURL(file);
-    }
-  };
 
   const handleSave = () => {
     if (!currentRecord || !currentItem) return;
@@ -385,7 +372,6 @@ export default function ConnectionBuilder() {
       ...chunkItem,
       focusExpression: editableFocusExpression.trim() || chunkItem.focusExpression,
       chunkTranslation: editableTranslation.trim() || chunkItem.chunkTranslation,
-      pronunciation: editablePronunciation.trim() || chunkItem.pronunciation,
       chunk: editableChunk.trim() || chunkItem.chunk,
       sentenceMeaning: editableSentenceMeaning.trim() || chunkItem.sentenceMeaning,
     };
@@ -864,53 +850,10 @@ export default function ConnectionBuilder() {
               <label style={{ fontSize: '0.85rem', fontWeight: 'bold', color: 'var(--text-muted)' }}>🌓 Opposite Meaning</label>
               <input className="input-field" value={connections.oppositeMeaning || ''} onChange={e => handleConnectionChange('oppositeMeaning', e.target.value)} placeholder="Antonym" />
             </div>
-            
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', gridColumn: 'span 2' }}>
-              <label style={{ fontSize: '0.85rem', fontWeight: 'bold', color: 'var(--text-muted)' }}>📖 Usage Context & Memory Story</label>
-              <textarea 
-                className="input-field" 
-                style={{ minHeight: '100px' }} 
-                value={connections.story || ''} 
-                onChange={e => handleConnectionChange('story', e.target.value)} 
-                placeholder="Where do you use it? Write a short story or mnemonic context..." 
-              />
-            </div>
-
-            {/* Visual Connection (Image) Integrated into Grid */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', gridColumn: 'span 2', padding: '1.25rem', background: '#f8fafc', borderRadius: '12px', border: '1px solid var(--border)' }}>
-              <label style={{ fontSize: '0.85rem', fontWeight: 'bold', color: 'var(--text-muted)', display: 'flex', justifyContent: 'space-between' }}>
-                🖼 Visual Connection (Optional)
-                {connections.imageUrl && (
-                  <button onClick={() => handleConnectionChange('imageUrl', '')} style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', fontSize: '0.75rem' }}>🗑 Remove</button>
-                )}
-              </label>
-              <div 
-                style={{
-                  width: '100%',
-                  height: connections.imageUrl ? '240px' : '60px',
-                  borderRadius: '8px',
-                  border: '2px dashed var(--border)',
-                  background: connections.imageUrl ? `url(${connections.imageUrl}) center/contain no-repeat #fff` : '#fff',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  cursor: 'pointer',
-                  transition: 'all 0.3s ease'
-                }}
-                onClick={() => fileInputRef.current?.click()}
-              >
-                {!connections.imageUrl && <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>+ Add Image</span>}
-                <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept="image/*" onChange={handleImageUpload} />
-              </div>
-            </div>
           </div>
         </section>
 
-        {/* Section 2.5: AI Connections Section */}
-        <section style={{ background: '#f8fafc', padding: '2rem', borderRadius: '16px', border: '1px solid var(--border)' }}>
-          <h3 style={{ margin: '0 0 1rem 0', color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-            ✨ AI-Assisted Connections
-          </h3>
+        <section style={{ marginTop: '2rem', background: '#f8fafc', padding: '2rem', borderRadius: '16px', border: '1px solid var(--border)' }}>
           
           {/* My Selected Connections Area */}
           <div style={{ marginBottom: '2rem', padding: '1.5rem', background: '#fff', borderRadius: '12px', border: '2px solid var(--primary)' }}>

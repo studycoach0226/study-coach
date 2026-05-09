@@ -65,7 +65,6 @@ export async function saveFlashcard(record: ChunkRecord, item: ChunkItem) {
       targetExpression: record.studentConnections.customFocusExpression || item.focusExpression,
       targetText: record.studentConnections.targetText || item.targetText || '',
       meaning: record.studentConnections.customTranslation || item.chunkTranslation,
-      pronunciation: record.studentConnections.pronunciation || item.pronunciation || '',
       learningMode: item.languageDirection === 'zh-en' ? 'chineseLearner' : 'englishLearner',
       encodingStatus: status,
       encodingCompleted: status === 'done',

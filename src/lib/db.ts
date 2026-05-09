@@ -233,7 +233,6 @@ export const db = {
       chunkTranslation: (item as any).chunkTranslation || '',
       focusExpression: (item as any).focusExpression || '',
       targetText: (item as any).targetText || '',
-      pronunciation: (item as any).pronunciation || '',
       sentenceMeaning: (item as any).sentenceMeaning || '',
       languageDirection: item.languageDirection || 'en-zh',
       teacherConnections: (item as any).teacherConnections || {},
