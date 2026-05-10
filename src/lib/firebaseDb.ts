@@ -133,6 +133,21 @@ export async function getStudentFlashcards(studentId: string) {
   }
 }
 
+export async function getFlashcardRecord(studentId: string, learningItemId: string) {
+  try {
+    const docId = `${studentId}_${learningItemId}`;
+    const docRef = doc(firestore, 'learningRecords', docId);
+    const docSnap = await getDoc(docRef);
+    if (docSnap.exists()) {
+      return { firestoreId: docSnap.id, ...docSnap.data() };
+    }
+    return null;
+  } catch (error) {
+    console.error('Error fetching single flashcard from Firestore:', error);
+    throw error;
+  }
+}
+
 export async function deleteFlashcardFromCloud(studentId: string, learningItemId: string) {
   try {
     // 1. Delete Firestore document

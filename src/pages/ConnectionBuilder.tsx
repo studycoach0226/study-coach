@@ -4,7 +4,7 @@ import { db } from '../lib/db';
 import { LearningItem, StudentLearningRecord, ConnectionFields, ChunkItem, ChunkRecord, SelectedConnection } from '../lib/types';
 import AudioRecorder from '../components/AudioRecorder';
 import { playUnifiedAudio, getAvailableGenders } from '../lib/audioUtils';
-import { saveFlashcard } from '../lib/firebaseDb';
+import { saveFlashcard, getFlashcardRecord, mapFirestoreToLocal } from '../lib/firebaseDb';
 import { getActiveEncodingFields, MediaMetadata } from '../config/encodingSchema';
 import { uploadAudioFile } from '../lib/storageUtils';
 import { generateConnectionSuggestions, generateChineseCharacters } from '../lib/aiService';
@@ -97,12 +97,14 @@ export default function ConnectionBuilder() {
 
   useEffect(() => {
     const loadData = async () => {
+      const sId = db.getCurrentUserId();
+      console.log(`[DEBUG] ConnectionBuilder loadData. studentId: ${sId}, wordIdParam: ${wordIdParam}`);
+
       if (!wordIdParam) {
         setStatus('idle');
         setErrorCode(null);
         setErrorMessage(null);
 
-        const sId = db.getCurrentUserId();
         if (!sId) return;
 
         const allItems = db.getLearningItems();
@@ -120,11 +122,34 @@ export default function ConnectionBuilder() {
       clearMissionState();
 
       try {
-        const sId = db.getCurrentUserId();
         if (!sId) throw new Error('No user logged in');
 
-        const item = db.getLearningItems().find(i => i.id === wordIdParam);
-        const record = db.getLearningRecord(sId, wordIdParam);
+        // 1. Attempt local lookup
+        let item = db.getLearningItems().find(i => i.id === wordIdParam);
+        let record = db.getLearningRecord(sId, wordIdParam);
+        console.log(`[DEBUG] Local lookup result - item: ${!!item}, record: ${!!record}`);
+
+        // 2. Attempt Firebase lookup if local failed
+        if (!item || !record) {
+          console.log(`[DEBUG] Local data missing, fetching from Firebase...`);
+          const cloudDoc = await getFlashcardRecord(sId, wordIdParam);
+          console.log(`[DEBUG] Firebase lookup result: ${!!cloudDoc}`);
+          
+          if (cloudDoc) {
+            const mapped = mapFirestoreToLocal(cloudDoc);
+            item = mapped.item;
+            record = mapped.record;
+            console.log(`[DEBUG] Mission loaded from: Firebase`);
+            
+            // Cache locally for this session
+            db.updateLearningItem(item);
+            db.saveLearningRecord(record);
+          } else {
+             console.log(`[DEBUG] Mission loaded from: None (Not found in cloud either)`);
+          }
+        } else {
+          console.log(`[DEBUG] Mission loaded from: Local`);
+        }
 
         if (!item) {
           setErrorCode('WORD_NOT_FOUND');
@@ -163,7 +188,7 @@ export default function ConnectionBuilder() {
         // Sync to auto-upload metadata states for UI feedback
         if (recordAudioFiles.chunkAudio) setSentenceUploadMetadata(recordAudioFiles.chunkAudio);
 
-         setEditableChunk(currentConns.customChunk || chunkItem.chunk);
+        setEditableChunk(currentConns.customChunk || chunkItem.chunk);
         setEditableContextText(currentConns.contextText || (chunkItem as any).contextText || '');
         setEditableTranslation(currentConns.customTranslation || chunkItem.chunkTranslation);
         setEditableFocusExpression(currentConns.customFocusExpression || chunkItem.focusExpression || '');
