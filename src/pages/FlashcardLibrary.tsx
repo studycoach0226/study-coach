@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { db } from '../lib/db';
 import { LearningItem, StudentLearningRecord, ChunkItem, ChunkRecord } from '../lib/types';
 import { fetchAssignmentsByStudentId } from '../lib/readingContent';
@@ -21,6 +21,7 @@ export default function FlashcardLibrary() {
   const navigate = useNavigate();
   const studentId = db.getCurrentUserId();
   const [items, setItems] = useState<{ item: LearningItem; record: StudentLearningRecord }[]>([]);
+  // @ts-ignore - Temporarily unused but logic preserved
   const [assignedItems, setAssignedItems] = useState<AssignedReadingTask[]>([]);
   const [viewMode, setViewMode] = useState<ViewMode>('list');
 
@@ -413,27 +414,7 @@ export default function FlashcardLibrary() {
 
         {addMode === 'none' ? (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem' }}>
-            <Link to={`/student/${studentId}/assignments`}>
-              <button
-                className="btn btn-primary"
-                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
-              >
-                🎓 Assigned from Teacher
-                {assignedItems.length > 0 && (
-                  <span
-                    style={{
-                      background: '#fff',
-                      color: 'var(--primary)',
-                      padding: '0.1rem 0.4rem',
-                      borderRadius: '10px',
-                      fontSize: '0.8rem',
-                    }}
-                  >
-                    {assignedItems.length}
-                  </span>
-                )}
-              </button>
-            </Link>
+
             <button
               className="btn btn-outline"
               style={{ background: '#fff' }}
