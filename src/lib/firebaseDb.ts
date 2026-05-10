@@ -28,6 +28,10 @@ export async function uploadAsset(base64: string, path: string): Promise<string>
   return await getDownloadURL(snapshot.ref);
 }
 
+export function getFlashcardDocId(studentId: string, learningItemId: string) {
+  return `${studentId}_${learningItemId}`;
+}
+
 export async function saveFlashcard(record: ChunkRecord, item: ChunkItem) {
   try {
     console.log('[DEBUG] Firestore-only test mode');
@@ -41,8 +45,8 @@ export async function saveFlashcard(record: ChunkRecord, item: ChunkItem) {
     // Determine encoding status
     const status = record.encodingStatus || (record.encodingCompleted ? 'done' : 'pending');
 
-    // Use a composite ID to ensure upsert behavior and avoid duplicates
-    const docId = `${record.studentId}_${record.learningItemId}`;
+    // Use a stable composite ID to ensure upsert behavior and avoid duplicates
+    const docId = record.firebaseDocId || getFlashcardDocId(record.studentId, record.learningItemId);
     const docRef = doc(firestore, 'learningRecords', docId);
 
     // Safety Requirement: Do not overwrite completed records with pending
@@ -133,9 +137,9 @@ export async function getStudentFlashcards(studentId: string) {
   }
 }
 
-export async function getFlashcardRecord(studentId: string, learningItemId: string) {
+export async function getFlashcardRecord(studentId: string, learningItemId: string): Promise<any | null> {
   try {
-    const docId = `${studentId}_${learningItemId}`;
+    const docId = getFlashcardDocId(studentId, learningItemId);
     const docRef = doc(firestore, 'learningRecords', docId);
     const docSnap = await getDoc(docRef);
     if (docSnap.exists()) {
@@ -252,6 +256,7 @@ export function mapFirestoreToLocal(docData: any): { item: ChunkItem, record: Ch
       sentenceMeaning: docData.contextMeaning || '',
     },
     audioUrls: mappedAudioUrls,
+    firebaseDocId: docData.firestoreId,
     startedAt: docData.createdAt?.toMillis ? docData.createdAt.toMillis() : Date.now(),
     updatedAt: docData.updatedAt?.toMillis ? docData.updatedAt.toMillis() : Date.now(),
   };

@@ -101,6 +101,7 @@ export interface BaseLearningRecord {
   savedToLibrary: boolean;
   startedAt: number;
   updatedAt: number;
+  firebaseDocId?: string;
 
   // Common fields (optional on base to simplify access in components)
   studentConnections?: ConnectionFields;

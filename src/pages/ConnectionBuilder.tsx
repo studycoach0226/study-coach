@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams, useParams } from 'react-router-dom';
 import { db } from '../lib/db';
 import { LearningItem, StudentLearningRecord, ConnectionFields, ChunkItem, ChunkRecord, SelectedConnection } from '../lib/types';
 import AudioRecorder from '../components/AudioRecorder';
@@ -21,7 +21,8 @@ const PRESET_TAGS = ['meaning', 'sound', 'character', 'collocation', 'usage', 's
 
 export default function ConnectionBuilder() {
   const navigate = useNavigate();
-  const studentId = db.getCurrentUserId();
+  const { studentId: routeStudentId } = useParams<{ studentId: string }>();
+  const studentId = routeStudentId || db.getCurrentUserId();
   const [searchParams] = useSearchParams();
   const wordIdParam = searchParams.get('wordId');
 
@@ -96,8 +97,13 @@ export default function ConnectionBuilder() {
   };
 
   useEffect(() => {
+    // Synchronize session from route to prevent identity mismatch on cross-device refresh
+    if (routeStudentId) {
+      db.setCurrentUserId(routeStudentId);
+    }
+
     const loadData = async () => {
-      const sId = db.getCurrentUserId();
+      const sId = routeStudentId || db.getCurrentUserId();
       console.log(`[DEBUG] ConnectionBuilder loadData. studentId: ${sId}, wordIdParam: ${wordIdParam}`);
 
       if (!wordIdParam) {
@@ -324,10 +330,16 @@ export default function ConnectionBuilder() {
   };
 
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!currentRecord || !currentItem) return;
     setIsSaving(true);
     setSaveError(null);
+
+    // Debug: Trace loading source
+    const sId = db.getCurrentUserId();
+    const isCloudLoaded = currentRecord.id.startsWith(sId || '') || currentRecord.id.includes('_');
+    console.log(`[DEBUG] Saving record. Loaded from: ${isCloudLoaded ? 'Firebase' : 'Local'}`);
+    console.log(`[DEBUG] Record ID used for save: ${currentRecord.id}`);
 
     // Requirement 4: Student recording is required, not AI.
     // Check studentWord or legacy focusExpression/word
@@ -382,13 +394,16 @@ export default function ConnectionBuilder() {
       studentChunk: audioFiles.chunkAudio?.url || audioUrls.studentChunk || audioUrls.chunk
     };
 
+    const status = isValid ? 'done' : 'pending';
+    console.log(`[DEBUG] Save payload encodingStatus: ${status}`);
+
     const updatedRecord: any = {
       ...chunkRecord,
       studentConnections: nextStudentConnections,
       audioUrls: finalAudioUrls,
       audioFiles,
       encodingCompleted: isValid,
-      encodingStatus: isValid ? 'done' : 'pending',
+      encodingStatus: status,
       isConnectionBuilt: isValid,
       updatedAt: Date.now()
     };
@@ -404,14 +419,36 @@ export default function ConnectionBuilder() {
     db.saveLearningRecord(updatedRecord);
     db.updateLearningItem(updatedItem);
 
-    // Write-only sync to Firebase (non-blocking)
-    saveFlashcard(updatedRecord, updatedItem).catch(err => {
-      console.warn('[DEBUG] Firebase sync failed, but local save succeeded:', err);
-    });
-    
-    setCurrentRecord(updatedRecord);
-    setCurrentItem(updatedItem);
-    setIsSaving(false);
+    // Sync to Firebase (Awaited for reliability on cross-device)
+    try {
+      console.log(`[DEBUG] Firebase update path: learningRecords/${updatedRecord.firebaseDocId || (updatedRecord.studentId + '_' + updatedRecord.learningItemId)}`);
+      const firebaseDocId = await saveFlashcard(updatedRecord, updatedItem);
+      console.log(`[DEBUG] Firebase save success. Document ID: ${firebaseDocId}`);
+      
+      // Verification Step (Requirement 3)
+      console.log('[DEBUG] Verifying persistence...');
+      const verifiedDoc = await getFlashcardRecord(updatedRecord.studentId, updatedRecord.learningItemId);
+      if (verifiedDoc) {
+        console.log(`[DEBUG] Verified Cloud Status: ${verifiedDoc.encodingStatus}`);
+        console.log(`[DEBUG] Verified Cloud UpdatedAt: ${verifiedDoc.updatedAt?.toMillis ? verifiedDoc.updatedAt.toMillis() : verifiedDoc.updatedAt}`);
+        
+        const mapped = mapFirestoreToLocal(verifiedDoc);
+        setCurrentRecord(mapped.record);
+        setCurrentItem(mapped.item);
+        
+        if (mapped.record.encodingStatus === status) {
+          console.log('[DEBUG] Verification SUCCESS: Status matches payload.');
+        } else {
+          console.error('[DEBUG] Verification FAILURE: Status mismatch in cloud!');
+        }
+      }
+    } catch (err) {
+      console.error('[DEBUG] Firebase sync failed:', err);
+      alert('CRITICAL: Cloud sync failed. Your changes may not be visible on other devices.');
+      setSaveError('Cloud sync failed. Your changes are saved locally but may not appear on other devices.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
 
@@ -1118,8 +1155,8 @@ export default function ConnectionBuilder() {
             <button
               className="btn btn-primary"
               style={{ padding: '1rem 3rem', fontSize: '1.2rem', minWidth: '240px' }}
-              onClick={() => {
-                handleSave();
+              onClick={async () => {
+                await handleSave();
                 // Navigate back to Flashcards library
                 navigate(`/student/${studentId}/flashcards`);
               }}

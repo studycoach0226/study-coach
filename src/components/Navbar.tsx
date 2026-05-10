@@ -110,12 +110,12 @@ export default function Navbar() {
         ) : (
           <>
             <NavLink to={`/student/${effectiveStudentId}`} current={location.pathname}>Dashboard</NavLink>
-            <NavLink to={`/student/${effectiveStudentId}/flashcards`} current={location.pathname}>My Flashcards</NavLink>
-            <NavLink to={`/student/${effectiveStudentId}/practice`} current={location.pathname}>Retrieval Practice</NavLink>
-            <NavLink to={`/student/${effectiveStudentId}/reading`} current={location.pathname}>My Reading</NavLink>
-            <NavLink to={`/student/${effectiveStudentId}/exercises`} current={location.pathname}>My Exercises</NavLink>
-            <NavLink to={`/student/${effectiveStudentId}/report`} current={location.pathname}>View Report</NavLink>
-            <NavLink to={`/student/${effectiveStudentId}/listen-speak`} current={location.pathname}>Listen & Speak</NavLink>
+            <NavLink to={`/student/${effectiveStudentId}/flashcards`} current={location.pathname}>Flashcards</NavLink>
+            <NavLink to={`/student/${effectiveStudentId}/practice`} current={location.pathname}>Retrieval</NavLink>
+            <NavLink to={`/student/${effectiveStudentId}/reading`} current={location.pathname}>Reading</NavLink>
+            <NavLink to={`/student/${effectiveStudentId}/exercises`} current={location.pathname}>Exercises</NavLink>
+            <NavLink to={`/student/${effectiveStudentId}/report`} current={location.pathname}>Report</NavLink>
+            {/* <NavLink to={`/student/${effectiveStudentId}/listen-speak`} current={location.pathname}>Listen & Speak</NavLink> */}
           </>
         )}
       </nav>

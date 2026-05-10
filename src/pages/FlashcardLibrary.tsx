@@ -248,14 +248,13 @@ export default function FlashcardLibrary() {
                 <th style={{ paddingBottom: '0.75rem', paddingRight: '1rem' }}>Chinese Characters</th>
               )}
               <th style={{ paddingBottom: '0.75rem', paddingRight: '1rem' }}>Meaning</th>
-              <th style={{ paddingBottom: '0.75rem', paddingRight: '1rem' }}>Mastery</th>
+              <th style={{ paddingBottom: '0.75rem', paddingRight: '1rem' }}>Retrieval</th>
               <th style={{ paddingBottom: '0.75rem', paddingRight: '1rem' }}>Encoding</th>
               <th style={{ paddingBottom: '0.75rem' }}>Action</th>
             </tr>
           </thead>
           <tbody>
             {list.map(({ item, record }) => {
-              const sColor = getStatusColor(record.status);
               const isComplete = db.isOnboardingComplete(record);
               return (
                 <tr key={record.id} style={{ borderBottom: '1px solid var(--border)' }}>
@@ -273,8 +272,8 @@ export default function FlashcardLibrary() {
                     <div style={{ fontWeight: 'bold', color: 'var(--text-main)' }}>{(record as ChunkRecord).studentConnections?.customTranslation || (item as ChunkItem).chunkTranslation || '-'}</div>
                   </td>
                   <td style={{ paddingRight: '1rem' }}>
-                    <span className="status-badge" style={{ background: sColor.bg, color: sColor.color }}>
-                      {record.status}
+                    <span style={{ fontWeight: 'bold', color: 'var(--text-main)' }}>
+                      {db.getAttempts().filter(a => a.studentId === studentId && a.wordId === item.id).length}
                     </span>
                   </td>
                   <td style={{ paddingRight: '1rem' }}>

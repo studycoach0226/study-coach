@@ -131,7 +131,7 @@ function ExpandableRow({ stat }: { stat: WordStat }) {
         </div>
 
         <div style={{ flex: '1', textAlign: 'center', color: 'var(--text-main)', fontSize: '0.95rem' }}>
-          {stat.attempts.length} attempts
+          {stat.attempts.length}
         </div>
 
         <div
@@ -253,7 +253,7 @@ function ReadingHistoryExpandableRow({ group }: { group: GroupedReadingReport })
         </div>
 
         <div style={{ color: 'var(--text-main)', fontSize: '0.95rem' }}>
-          {group.attempts.length} attempts
+          {group.attempts.length}
         </div>
 
         <div style={{ textAlign: 'right', paddingRight: '0.5rem', color: 'var(--text-muted)' }}>
@@ -513,7 +513,7 @@ export default function ReportCard() {
               textTransform: 'uppercase',
             }}
           >
-            Total Attempts
+            Retrieval
           </h3>
           <p style={{ fontSize: '2.5rem', margin: 0, fontWeight: 800, color: 'var(--primary)' }}>
             {stats.totalAttempts}
@@ -618,7 +618,7 @@ export default function ReportCard() {
             }}
           >
             <div style={{ flex: '1' }}>Word</div>
-            <div style={{ flex: '1', textAlign: 'center' }}>Total Attempts</div>
+            <div style={{ flex: '1', textAlign: 'center' }}>Retrieval</div>
             <div style={{ flex: '1', textAlign: 'center' }}>Accuracy</div>
             <div style={{ flex: '1', textAlign: 'right', paddingRight: '2rem' }}>Latest Activity</div>
           </div>
