@@ -230,9 +230,10 @@ export default function FlashcardLibrary() {
     if (window.confirm('Delete this card?\nThis will remove it from your library.')) {
       const pair = items.find(p => p.record.id === recordId);
       if (pair) {
-        console.log(`[DEBUG] Delete target firebaseDocId/path: learningRecords/${pair.record.studentId}_${pair.record.learningItemId}`);
+        const targetPath = pair.record.firebasePath || `learningRecords/${pair.record.studentId}_${pair.record.learningItemId}`;
+        console.log(`[DEBUG] Delete target path: ${targetPath}`);
         try {
-          await deleteFlashcardFromCloud(pair.record.studentId, pair.record.learningItemId);
+          await deleteFlashcardFromCloud(pair.record.studentId, pair.record.learningItemId, pair.record.firebasePath);
           console.log('[DEBUG] Delete success in Firebase');
         } catch (err) {
           console.error('[DEBUG] Delete failure in Firebase:', err);
@@ -267,7 +268,6 @@ export default function FlashcardLibrary() {
                 <th style={{ paddingBottom: '0.75rem', paddingRight: '1rem' }}>Chinese Characters</th>
               )}
               <th style={{ paddingBottom: '0.75rem', paddingRight: '1rem' }}>Meaning</th>
-              <th style={{ paddingBottom: '0.75rem', paddingRight: '1rem' }}>Retrieval</th>
               <th style={{ paddingBottom: '0.75rem', paddingRight: '1rem' }}>Encoding</th>
               <th style={{ paddingBottom: '0.75rem' }}>Action</th>
             </tr>
@@ -289,11 +289,6 @@ export default function FlashcardLibrary() {
                   )}
                   <td style={{ color: 'var(--text-muted)', paddingRight: '1rem' }}>
                     <div style={{ fontWeight: 'bold', color: 'var(--text-main)' }}>{(record as ChunkRecord).studentConnections?.customTranslation || (item as ChunkItem).chunkTranslation || '-'}</div>
-                  </td>
-                  <td style={{ paddingRight: '1rem' }}>
-                    <span style={{ fontWeight: 'bold', color: 'var(--text-main)' }}>
-                      {db.getAttempts().filter(a => a.studentId === studentId && a.wordId === item.id).length}
-                    </span>
                   </td>
                   <td style={{ paddingRight: '1rem' }}>
                     {isComplete ? (

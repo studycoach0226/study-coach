@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
+import { getStudentFlashcards, mapFirestoreToLocal, logRetrievalAttempt } from '../lib/firebaseDb';
 import { db } from '../lib/db';
 import { LearningItem, StudentLearningRecord, ChunkItem, ReadingItem, ChunkRecord } from '../lib/types';
 import { retrievalEngine } from '../lib/retrievable/retrievalEngine';
@@ -11,7 +12,8 @@ import { evaluateTypedAnswer } from '../lib/aiService';
 
 export default function RetrievalPractice() {
   const navigate = useNavigate();
-  const studentId = db.getCurrentUserId();
+  const { studentId: routeStudentId } = useParams<{ studentId: string }>();
+  const studentId = routeStudentId || db.getCurrentUserId();
   const [practiceQueue, setPracticeQueue] = useState<{ item: LearningItem, record: StudentLearningRecord, task: GeneratedTask }[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [mode, setMode] = useState<'selection' | 'flashcard' | 'test'>('selection');
@@ -36,90 +38,144 @@ export default function RetrievalPractice() {
   const [voicePref, setVoicePref] = useState<'female' | 'male' | 'system'>('system');
 
   useEffect(() => {
-    const sId = db.getCurrentUserId();
+    const sId = routeStudentId || db.getCurrentUserId();
     if (!sId) return;
 
-    const syncedAssignment = assignmentStore.getSyncedByStudentId(sId);
-    const syncedTemplates = templateBank.getSynced();
+    // Sync session from route
+    if (routeStudentId) db.setCurrentUserId(routeStudentId);
 
-    // Globally enabled templates
-    const globallyEnabledIds = new Set(syncedTemplates.filter(t => t.enabled).map(t => t.template_id));
+    console.log(`[DEBUG] RetrievalPractice loading for studentId: ${sId}`);
 
-    let enabledTemplateIds: string[] = [];
-    if (syncedAssignment?.template_ids && syncedAssignment.template_ids.length > 0) {
-      enabledTemplateIds = syncedAssignment.template_ids.filter(id => globallyEnabledIds.has(id));
-    } else {
-      enabledTemplateIds = ['tA', 'tB', 'tD', 'tS'].filter(id => globallyEnabledIds.has(id));
-    }
+    const loadData = async () => {
+      try {
+        // 1. Fetch Cloud Records (Source of Truth)
+        console.log(`[DEBUG] RetrievalPractice fetching from Firebase...`);
+        const cloudDocs = await getStudentFlashcards(sId);
+        console.log(`[DEBUG] Firebase records count fetched: ${cloudDocs.length}`);
 
-    const allItems = db.getLearningItems();
-    const studentRecords = db.getLearningRecords().filter(r => r.studentId === sId && r.status !== 'completed');
+        const cloudPairs = cloudDocs.map(doc => mapFirestoreToLocal(doc));
 
-    // Categorize encoded items
-    const encodedItems = studentRecords
-      .map(record => {
-        const item = allItems.find(i => i.id === record.learningItemId);
-        if (!item || !record.encodingCompleted) return null;
-
-        let task: GeneratedTask | null = null;
-
-        // Pick a random enabled template
-        const templateId = enabledTemplateIds[Math.floor(Math.random() * enabledTemplateIds.length)];
-        const syncedTemplate = syncedTemplates.find(t => t.template_id === templateId);
-
-        if (syncedTemplate) {
-          task = retrievalEngine.generateTask(item.id, templateId, syncedTemplate);
+        // 2. Sync local db with Firebase
+        const studentRecords = db.getLearningRecords().filter(r => r.studentId === sId);
+        const cloudItemIds = new Set(cloudPairs.map(p => p.item.id));
+        
+        const staleLocalRecords = studentRecords.filter(r => !cloudItemIds.has(r.learningItemId));
+        if (staleLocalRecords.length > 0) {
+          console.log(`[DEBUG] Removing ${staleLocalRecords.length} stale local records missing from Firebase`);
+          staleLocalRecords.forEach(r => db.deleteLearningRecord(r.id));
         }
 
-        // Fallback for custom items or failed engine tasks
-        if (!task) {
-          const chunkItem = item as ChunkItem;
-          task = {
-            task_id: `fallback_${Date.now()}_${item.id}`,
-            template_id: 't_fallback',
-            content_id: item.id,
-            prompt: `What is the meaning of "${chunkItem.focusExpression}"?`,
-            expected_output: chunkItem.chunkTranslation || '',
-            hint: chunkItem.chunk ? `Hint: ${chunkItem.chunk}` : undefined,
-            created_at: new Date().toISOString()
-          };
+        cloudPairs.forEach(pair => {
+          db.updateLearningItem(pair.item);
+          db.saveLearningRecord(pair.record);
+        });
+
+        // 3. Prepare Queue
+        const syncedTemplates = templateBank.getSynced();
+        const globallyEnabledIds = new Set(syncedTemplates.filter(t => t.enabled).map(t => t.template_id));
+        const syncedAssignment = assignmentStore.getSyncedByStudentId(sId);
+
+        let enabledTemplateIds: string[] = [];
+        if (syncedAssignment?.template_ids && syncedAssignment.template_ids.length > 0) {
+          enabledTemplateIds = syncedAssignment.template_ids.filter(id => globallyEnabledIds.has(id));
+        } else {
+          enabledTemplateIds = ['tA', 'tB', 'tD', 'tS'].filter(id => globallyEnabledIds.has(id));
         }
 
-        return { item, record, task };
-      })
-      .filter((pair): pair is { item: LearningItem, record: StudentLearningRecord, task: GeneratedTask } => !!pair);
+        const encodedItems = cloudPairs
+          .filter(pair => {
+            const isDone = pair.record.encodingStatus === 'done' || pair.record.encodingCompleted || pair.record.isConnectionBuilt;
+            return isDone;
+          })
+          .map(pair => {
+            const { item, record } = pair;
+            let task: GeneratedTask | null = null;
+            const templateId = enabledTemplateIds[Math.floor(Math.random() * enabledTemplateIds.length)];
+            const syncedTemplate = syncedTemplates.find(t => t.template_id === templateId);
 
-    const addedIds = new Set<string>();
-    const dueItems: typeof encodedItems = [];
-    const weakItems: typeof encodedItems = [];
-    const extraItems: typeof encodedItems = [];
+            if (syncedTemplate) {
+              task = retrievalEngine.generateTask(item.id, templateId, syncedTemplate);
+            }
 
-    encodedItems.forEach(pair => {
-      if (db.isWordDue(sId, pair.item.id)) {
-        dueItems.push(pair);
-        addedIds.add(pair.item.id);
+            if (!task) {
+              const chunkItem = item as ChunkItem;
+              task = {
+                task_id: `fallback_${Date.now()}_${item.id}`,
+                template_id: 't_fallback',
+                content_id: item.id,
+                prompt: `What is the meaning of "${chunkItem.focusExpression}"?`,
+                expected_output: chunkItem.chunkTranslation || '',
+                hint: chunkItem.chunk ? `Hint: ${chunkItem.chunk}` : undefined,
+                created_at: new Date().toISOString()
+              };
+            }
+            return { item, record, task };
+          });
+
+        const addedIds = new Set<string>();
+        const dueItems: any[] = [];
+        const weakItems: any[] = [];
+        const extraItems: any[] = [];
+
+        encodedItems.forEach(pair => {
+          if (db.isWordDue(sId, pair.item.id)) {
+            dueItems.push(pair);
+            addedIds.add(pair.item.id);
+          }
+        });
+
+        encodedItems.forEach(pair => {
+          if (!addedIds.has(pair.item.id) && pair.record.status === 'weak') {
+            weakItems.push(pair);
+            addedIds.add(pair.item.id);
+          }
+        });
+
+        encodedItems.forEach(pair => {
+          if (!addedIds.has(pair.item.id)) {
+            extraItems.push(pair);
+            addedIds.add(pair.item.id);
+          }
+        });
+
+        const finalQueue = [...dueItems, ...weakItems, ...extraItems];
+        console.log(`[DEBUG] RetrievalPractice Page - studentId: ${sId}`);
+        console.log(`[DEBUG] RetrievalPractice - Firebase flashcards count: ${cloudPairs.length}`);
+        
+        encodedItems.forEach((p, idx) => {
+           console.log(`[DEBUG]   Item ${idx}: ${p.item.focusExpression}, retrievalCount: ${p.record.retrievalCount}, historyLength: ${(p.record as any).retrievalHistory?.length || 0}`);
+        });
+
+        console.log(`[DEBUG] RetrievalPractice final queue count: ${finalQueue.length}`);
+        setPracticeQueue(finalQueue);
+        // We'll also store the total count for the empty state message
+        (window as any)._retrievalTotalCount = cloudPairs.length;
+        (window as any)._retrievalReadyCount = encodedItems.length;
+      } catch (err) {
+        console.error('[DEBUG] Failed to load data from Firebase:', err);
       }
-    });
+    };
 
-    encodedItems.forEach(pair => {
-      if (!addedIds.has(pair.item.id) && pair.record.status === 'weak') {
-        weakItems.push(pair);
-        addedIds.add(pair.item.id);
-      }
-    });
-
-    encodedItems.forEach(pair => {
-      if (!addedIds.has(pair.item.id)) {
-        extraItems.push(pair);
-        addedIds.add(pair.item.id);
-      }
-    });
-
-    const finalQueue = [...dueItems, ...weakItems, ...extraItems];
-    setPracticeQueue(finalQueue);
-  }, []);
+    loadData();
+  }, [routeStudentId]);
 
   const handleNext = () => {
+    const currentPair = practiceQueue[currentIndex];
+    
+    // REQUIREMENT: Log flashcard mode attempt if finished
+    if (mode === 'flashcard' && currentPair) {
+      const isChineseLearner = currentPair.item.languageDirection === 'zh-en';
+      logRetrievalAttempt(studentId as string, {
+        targetExpression: (currentPair.item as ChunkItem).focusExpression,
+        targetText: (currentPair.item as ChunkItem).targetText,
+        meaning: (currentPair.item as ChunkItem).chunkTranslation,
+        practiceMode: 'flashcard',
+        direction: fcDirection === 'auto' ? (isChineseLearner ? 'L1_TO_L2' : 'L2_TO_L1') : (fcDirection === 'l1-l2' ? 'L1_TO_L2' : 'L2_TO_L1'),
+        isCorrect: true, // Flashcard mode assumes success for now as there are no "Wrong" buttons
+        expectedAnswer: isChineseLearner ? (currentPair.item as ChunkItem).focusExpression : (currentPair.item as ChunkItem).chunkTranslation
+      }, currentPair.record as any).catch(err => console.error('[DEBUG] Failed to log flashcard attempt:', err));
+    }
+
     if (currentIndex < practiceQueue.length - 1) {
       setCurrentIndex(i => i + 1);
       setTypedAnswer('');
@@ -180,6 +236,18 @@ export default function RetrievalPractice() {
         passed: result.passed,
         usedHint: showHints
       });
+
+      // REQUIREMENT: Log retrieval to Firebase
+      logRetrievalAttempt(studentId as string, {
+        targetExpression: (item as ChunkItem).focusExpression,
+        targetText: (item as ChunkItem).targetText,
+        meaning: (item as ChunkItem).chunkTranslation,
+        practiceMode: 'selfTest',
+        direction: testDirection === 'l1-l2' ? 'L1_TO_L2' : 'L2_TO_L1',
+        isCorrect: result.passed,
+        studentAnswer: studentAnswer,
+        expectedAnswer: testContent.rawExpected
+      }, currentPair.record as any).catch(err => console.error('[DEBUG] Failed to log retrieval to Firebase:', err));
 
       if (result.passed) {
         setFeedback({ type: 'success', msg: result.feedback || '✅ Correct!' });
@@ -336,11 +404,34 @@ export default function RetrievalPractice() {
 
 
 
+  const totalCount = (window as any)._retrievalTotalCount || 0;
+  const readyCount = (window as any)._retrievalReadyCount || 0;
+
   if (practiceQueue.length === 0) {
     return (
       <div style={{ maxWidth: '600px', margin: '4rem auto', textAlign: 'center' }} className="card">
-        <h2>🎉 All Caught Up!</h2>
-        <p>No retrieval items ready. Complete encoding missions for your units first!</p>
+        {totalCount === 0 ? (
+          <>
+            <h2>📭 Your Library is Empty</h2>
+            <p>Go to the home page to add some cards first!</p>
+          </>
+        ) : (
+          <>
+            <h2>🎉 All Caught Up!</h2>
+            <p>You have <strong>{totalCount}</strong> cards in your library.</p>
+            <p style={{ margin: '1rem 0' }}>
+              ✅ {readyCount} Ready to Practice<br />
+              ⏳ {totalCount - readyCount} Not Ready (Complete encoding missions first)
+            </p>
+            {readyCount === 0 && (
+              <div style={{ background: '#fffbeb', border: '1px solid #fcd34d', padding: '1rem', borderRadius: '12px', margin: '1.5rem 0', color: '#92400e' }}>
+                <p style={{ fontSize: '0.9rem', margin: 0 }}>
+                  <strong>Note:</strong> You must finish the encoding missions for your new cards before they appear here for retrieval.
+                </p>
+              </div>
+            )}
+          </>
+        )}
         <button className="btn btn-primary" onClick={() => navigate(`/student/${studentId}`)}>Back to Dashboard</button>
       </div>
     );

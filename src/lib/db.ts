@@ -199,8 +199,11 @@ export const db = {
     const index = list.findIndex(i => i.id === item.id);
     if (index >= 0) {
       list[index] = { ...item, updatedAt: Date.now() };
-      localStorage.setItem(KEYS.LEARNING_ITEMS, JSON.stringify(list));
+    } else {
+      // REQUIREMENT: Support cross-device reconstruction by adding missing cloud items to local DB
+      list.push(item);
     }
+    localStorage.setItem(KEYS.LEARNING_ITEMS, JSON.stringify(list));
   },
 
   deleteLearningItem: (id: string) => {

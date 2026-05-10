@@ -130,36 +130,40 @@ export default function ConnectionBuilder() {
       try {
         if (!sId) throw new Error('No user logged in');
 
-        // 1. Attempt local lookup
-        let item = db.getLearningItems().find(i => i.id === wordIdParam);
-        let record = db.getLearningRecord(sId, wordIdParam);
-        console.log(`[DEBUG] Local lookup result - item: ${!!item}, record: ${!!record}`);
+        const compositeId = `${sId}_${wordIdParam}`;
+        const attemptedNewPath = `students/${sId}/flashcards/${compositeId}`;
 
-        // 2. Attempt Firebase lookup if local failed
-        if (!item || !record) {
-          console.log(`[DEBUG] Local data missing, fetching from Firebase...`);
-          const cloudDoc = await getFlashcardRecord(sId, wordIdParam);
-          console.log(`[DEBUG] Firebase lookup result: ${!!cloudDoc}`);
+        console.log(`[DEBUG] ConnectionBuilder Route Params - studentId: ${sId}, learningItemId: ${wordIdParam}`);
+        console.log(`[DEBUG] ConnectionBuilder Attempting Cloud Fetch: ${attemptedNewPath}`);
+
+        // REQUIREMENT: Firebase is the source of truth
+        const cloudDoc = await getFlashcardRecord(sId, wordIdParam);
+        
+        let item;
+        let record;
+
+        if (cloudDoc) {
+          console.log(`[DEBUG] Cloud record FOUND. Path: ${cloudDoc.firebasePath}`);
+          const mapped = mapFirestoreToLocal(cloudDoc);
+          item = mapped.item;
+          record = mapped.record;
+          console.log(`[DEBUG] Mission reconstructed from cloud successfully: ${!!item && !!record}`);
           
-          if (cloudDoc) {
-            const mapped = mapFirestoreToLocal(cloudDoc);
-            item = mapped.item;
-            record = mapped.record;
-            console.log(`[DEBUG] Mission loaded from: Firebase`);
-            
-            // Cache locally for this session
-            db.updateLearningItem(item);
-            db.saveLearningRecord(record);
-          } else {
-             console.log(`[DEBUG] Mission loaded from: None (Not found in cloud either)`);
-          }
+          // Sync local db for offline/cache consistency
+          db.updateLearningItem(item);
+          db.saveLearningRecord(record);
         } else {
-          console.log(`[DEBUG] Mission loaded from: Local`);
+          // Fallback to local only if not found in cloud
+          console.log(`[DEBUG] Cloud record NOT FOUND. Falling back to local lookup...`);
+          item = db.getLearningItems().find(i => i.id === wordIdParam);
+          record = db.getLearningRecord(sId, wordIdParam);
+          console.log(`[DEBUG] Local lookup result - item: ${!!item}, record: ${!!record}`);
         }
 
         if (!item) {
+          console.error(`[DEBUG] Reconstruction FAILED: Learning item "${wordIdParam}" missing from all sources.`);
           setErrorCode('WORD_NOT_FOUND');
-          setErrorMessage(`Learning item with ID "${wordIdParam}" not found.`);
+          setErrorMessage(`Learning item with ID "${wordIdParam}" not found on this device or in cloud.`);
           setStatus('error');
           return;
         }
@@ -421,9 +425,8 @@ export default function ConnectionBuilder() {
 
     // Sync to Firebase (Awaited for reliability on cross-device)
     try {
-      console.log(`[DEBUG] Firebase update path: learningRecords/${updatedRecord.firebaseDocId || (updatedRecord.studentId + '_' + updatedRecord.learningItemId)}`);
-      const firebaseDocId = await saveFlashcard(updatedRecord, updatedItem);
-      console.log(`[DEBUG] Firebase save success. Document ID: ${firebaseDocId}`);
+      const result = await saveFlashcard(updatedRecord, updatedItem);
+      console.log(`[DEBUG] Firebase save success. Document ID: ${result.id}, Path: ${result.path}`);
       
       // Verification Step (Requirement 3)
       console.log('[DEBUG] Verifying persistence...');

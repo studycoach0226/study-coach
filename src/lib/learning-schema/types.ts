@@ -102,6 +102,7 @@ export interface BaseLearningRecord {
   startedAt: number;
   updatedAt: number;
   firebaseDocId?: string;
+  firebasePath?: string;
 
   // Common fields (optional on base to simplify access in components)
   studentConnections?: ConnectionFields;
@@ -124,6 +125,14 @@ export interface BaseLearningRecord {
   encodingStatus?: 'pending' | 'done';
   isConnectionBuilt?: boolean; // Keep for backward compatibility/reference
   googleSheetLoggedAt?: number;
+
+  // Retrieval Summary & History (Firebase-first)
+  retrievalCount?: number;
+  correctCount?: number;
+  incorrectCount?: number;
+  lastRetrievedAt?: number | null;
+  lastResult?: 'correct' | 'incorrect' | null;
+  retrievalHistory?: any[];
 }
 
 export interface ChunkRecord extends BaseLearningRecord {

@@ -9,6 +9,7 @@ import {
   SheetReadingArticle
 } from '../lib/readingContent';
 import { UI_LABELS } from '../lib/appConfig';
+import { getStudentFlashcards, mapFirestoreToLocal } from '../lib/firebaseDb';
 
 function parseAssignedRange(rangeStr: string): string[] {
   if (!rangeStr || rangeStr === '-') return [];
@@ -333,48 +334,71 @@ export default function ReportCard() {
     const sId = db.getCurrentUserId();
     if (!sId) return;
 
-    const studentRecords = db.getLearningRecords().filter((r) => r.studentId === sId);
-    const allItems = db.getLearningItems();
-    const allAttempts = db.getAttempts().filter((a) => a.studentId === sId);
+    console.log(`[DEBUG] ReportCard loading for student: ${sId}`);
 
-    let totalOnboarded = 0;
+    const loadCloudData = async () => {
+      try {
+        const cloudDocs = await getStudentFlashcards(sId);
+        console.log(`[DEBUG] ReportCard - Firebase flashcards count: ${cloudDocs.length}`);
+        
+        const cloudPairs = cloudDocs.map(doc => mapFirestoreToLocal(doc));
+        
+        let totalOnboarded = 0;
+        let totalRetrievalAttempts = 0;
 
-    const computed: WordStat[] = studentRecords
-      .map((record) => {
-        const item = allItems.find((i) => i.id === record.learningItemId);
-        if (!item) return null;
+        const computed: WordStat[] = cloudPairs.map(({ item, record }) => {
+          if (record.encodingCompleted) totalOnboarded++;
+          
+          const history = (record as any).retrievalHistory || [];
+          totalRetrievalAttempts += (record as any).retrievalCount || 0;
 
-        if ((record as any).encodingCompleted) totalOnboarded++;
+          // Map retrievalHistory entries back to Attempt structure
+          const attempts: Attempt[] = history.map((h: any) => ({
+            id: h.attemptId || `att_${Date.now()}_${Math.random()}`,
+            wordId: record.learningItemId,
+            studentId: record.studentId,
+            date: h.createdAt,
+            passed: h.isCorrect,
+            mode: h.practiceMode || 'flashcard',
+            typedAnswer: h.studentAnswer || '',
+            expectedAnswer: h.expectedAnswer || '',
+            usedHint: false
+          })).sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
-        const wordAttempts = allAttempts
-          .filter((a) => a.wordId === record.learningItemId)
-          .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+          console.log(`[DEBUG] Card: ${item.focusExpression}, retrievalCount: ${record.retrievalCount}, historyLength: ${history.length}`);
 
-        const passCount = wordAttempts.filter((a) => a.passed).length;
+          return {
+            item,
+            record,
+            attempts,
+            accuracy: record.retrievalCount && record.retrievalCount > 0 
+              ? (record.correctCount || 0) / record.retrievalCount 
+              : 0,
+            latest: attempts.length > 0 ? attempts[0] : null
+          };
+        });
 
-        return {
-          item,
-          record,
-          attempts: wordAttempts,
-          accuracy: wordAttempts.length > 0 ? passCount / wordAttempts.length : 0,
-          latest: wordAttempts.length > 0 ? wordAttempts[0] : null,
-        };
-      })
-      .filter((s): s is WordStat => !!s);
+        computed.sort((a, b) => {
+          if (!a.latest && !b.latest) return 0;
+          if (!a.latest) return 1;
+          if (!b.latest) return -1;
+          return new Date(b.latest.date).getTime() - new Date(a.latest.date).getTime();
+        });
 
-    computed.sort((a, b) => {
-      if (!a.latest && !b.latest) return 0;
-      if (!a.latest) return 1;
-      if (!b.latest) return -1;
-      return new Date(b.latest.date).getTime() - new Date(a.latest.date).getTime();
-    });
+        console.log(`[DEBUG] ReportCard - Final rendered count: ${computed.length}`);
 
-    setStats({
-      totalAttempts: allAttempts.length,
-      onboardedCount: totalOnboarded,
-    });
+        setStats({
+          totalAttempts: totalRetrievalAttempts,
+          onboardedCount: totalOnboarded,
+        });
+        setWordStats(computed);
 
-    setWordStats(computed);
+      } catch (error) {
+        console.error('[DEBUG] ReportCard - Failed to load cloud data:', error);
+      }
+    };
+
+    loadCloudData();
   }, []);
 
   useEffect(() => {
