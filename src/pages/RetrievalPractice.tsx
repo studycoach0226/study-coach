@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { db } from '../lib/db';
-import { LearningItem, StudentLearningRecord, ChunkItem, ReadingItem } from '../lib/types';
+import { LearningItem, StudentLearningRecord, ChunkItem, ReadingItem, ChunkRecord } from '../lib/types';
 import { retrievalEngine } from '../lib/retrievable/retrievalEngine';
 import { assignmentStore } from '../lib/retrievable/assignmentStore';
 import { templateBank } from '../lib/retrievable/templateBank';
@@ -183,7 +183,6 @@ export default function RetrievalPractice() {
 
       if (result.passed) {
         setFeedback({ type: 'success', msg: result.feedback || '✅ Correct!' });
-        setTimeout(handleNext, 1500);
       } else {
         setFeedback({ type: 'error', msg: result.feedback || '❌ Not quite right.' });
         setShowHints(true);
@@ -268,6 +267,29 @@ export default function RetrievalPractice() {
     }
   };
 
+  const getTtsText = (item: LearningItem, record: StudentLearningRecord, type: 'focusExpression' | 'chunk'): string => {
+    const isChineseLearner = item.languageDirection === 'zh-en';
+    const chunkItem = item as ChunkItem;
+    const chunkRecord = record as ChunkRecord;
+
+    if (isChineseLearner) {
+      if (type === 'focusExpression') {
+        // Preference: targetText (Chinese characters) > targetExpression (Pinyin)
+        return chunkRecord?.studentConnections?.targetText || chunkItem?.targetText || chunkItem?.focusExpression || '';
+      } else {
+        // Preference: contextText (Chinese sentence) > context (Pinyin sentence)
+        return chunkRecord?.studentConnections?.contextText || chunkItem?.contextText || chunkItem?.chunk || '';
+      }
+    } else {
+      // English learner: use standard fields
+      if (type === 'focusExpression') {
+        return chunkItem?.focusExpression || '';
+      } else {
+        return chunkItem?.chunk || '';
+      }
+    }
+  };
+
   const playRecording = () => {
     if (recordedBlobUrl) {
       const audio = new Audio(recordedBlobUrl);
@@ -303,13 +325,8 @@ export default function RetrievalPractice() {
 
     // AI TTS Fallback
     let ttsText = text;
-    if (isChineseLearner) {
-      // Requirement: prioritize characters for better AI TTS quality
-      if (type === 'focusExpression') {
-        ttsText = record?.targetText || record?.studentConnections?.customFocusExpression || currentItem?.focusExpression || text;
-      } else if (type === 'chunk') {
-        ttsText = record?.contextText || record?.studentConnections?.customChunk || currentItem?.chunk || text;
-      }
+    if (record && (type === 'focusExpression' || type === 'chunk')) {
+      ttsText = getTtsText(currentItem, record, type);
     }
     
     if (ttsText) {
@@ -446,6 +463,10 @@ export default function RetrievalPractice() {
   const testContent = getTestContent();
 
   const renderTestInput = () => {
+    const current = practiceQueue[currentIndex];
+    if (!current) return null;
+    const isChineseLearner = current.item.languageDirection === 'zh-en';
+
     if (isEvaluating) {
       return (
         <div style={{ padding: '2rem', textAlign: 'center' }}>
@@ -501,7 +522,7 @@ export default function RetrievalPractice() {
                   <p style={{ margin: '0 0 0.5rem', color: '#166534', fontWeight: 'bold', fontSize: '0.9rem' }}>✅ Answer Recorded</p>
                   {transcript && (
                     <p style={{ margin: '0 0 1rem', fontSize: '1rem', color: 'var(--text-main)', fontStyle: 'italic' }}>
-                      "You said: {transcript}"
+                      "You said: {isChineseLearner && transcript === ((current.item as ChunkItem).targetText || (current.record as any).targetText) ? `${(current.item as ChunkItem).focusExpression} / ${transcript}` : transcript}"
                     </p>
                   )}
                   <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -546,12 +567,28 @@ export default function RetrievalPractice() {
       <>
         <div>
           <h3 style={{ color: feedback.type === 'success' ? 'var(--success)' : 'var(--danger)', marginBottom: '1.5rem' }}>{feedback.msg}</h3>
-          <div style={{ margin: '1rem 0', background: '#f8fafc', padding: '1.5rem', borderRadius: '12px', border: '1px solid var(--border)' }}>
-            <p style={{ margin: 0, fontWeight: 'bold', color: 'var(--text-muted)', fontSize: '0.8rem', textTransform: 'uppercase' }}>Expected Answer:</p>
-            <div style={{ margin: '0.5rem 0' }}>{testContent.displayExpected}</div>
-            {current.task.feedback && <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginTop: '0.5rem' }}>{current.task.feedback}</p>}
+          
+          <div style={{ margin: '1rem 0', background: '#f8fafc', padding: '1.5rem', borderRadius: '12px', border: '1px solid var(--border)', textAlign: 'left' }}>
+            <p style={{ margin: '0 0 0.5rem', fontWeight: 'bold', color: 'var(--text-muted)', fontSize: '0.8rem', textTransform: 'uppercase' }}>Your Answer:</p>
+            <div style={{ marginBottom: '1.5rem' }}>
+              <div style={{ fontSize: '1.1rem', marginBottom: '0.5rem' }}>
+                {answerMode === 'voice' && transcript ? (
+                  isChineseLearner && transcript === ((current.item as ChunkItem).targetText || (current.record as any).targetText) 
+                    ? `${(current.item as ChunkItem).focusExpression} / ${transcript}` 
+                    : transcript
+                ) : typedAnswer}
+              </div>
+              {recordedBlobUrl && (
+                <button className="btn btn-outline" style={{ background: '#fff', padding: '0.3rem 0.6rem', fontSize: '0.8rem' }} onClick={playRecording}>
+                  🔊 Play Your Answer
+                </button>
+              )}
+            </div>
+
+            <p style={{ margin: '0 0 0.5rem', fontWeight: 'bold', color: 'var(--text-muted)', fontSize: '0.8rem', textTransform: 'uppercase' }}>Expected Answer:</p>
+            <div style={{ marginBottom: '1rem' }}>{testContent.displayExpected}</div>
             
-            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', marginTop: '1.5rem', paddingTop: '1rem', borderTop: '1px solid var(--border)' }}>
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-start', marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border)' }}>
               <button className="btn btn-outline" style={{ background: '#fff', fontSize: '0.85rem' }} onClick={() => speak(testContent.rawExpected, current.record, 'focusExpression', 'ai')}>🤖 AI Voice</button>
               {(current.record.audioUrls?.studentWord || current.record.audioUrls?.focusExpression || current.record.audioUrls?.word) && (
                 <button className="btn btn-outline" style={{ background: '#fff', fontSize: '0.85rem' }} onClick={() => speak(testContent.rawExpected, current.record, 'focusExpression', 'student')}>🎤 My Voice</button>
@@ -560,13 +597,18 @@ export default function RetrievalPractice() {
           </div>
         </div>
 
-        {showHints && current.task.hint && (
+        {feedback && (
+          <div style={{ marginTop: '1.5rem' }}>
+            <button className="btn btn-primary" style={{ width: '100%', padding: '1rem' }} onClick={handleNext}>
+              {currentIndex < practiceQueue.length - 1 ? 'Next Card' : 'Finish Practice'}
+            </button>
+          </div>
+        )}
+
+        {feedback.type === 'error' && showHints && current.task.hint && (
           <div style={{ marginTop: '1.5rem', padding: '1.25rem', background: '#fffbeb', border: '1px solid #fef3c7', borderRadius: '12px', textAlign: 'left' }}>
             <p style={{ margin: 0, fontWeight: 'bold', color: '#92400e' }}>💡 Hint:</p>
             <p style={{ margin: '0.5rem 0', color: '#b45309' }}>{current.task.hint}</p>
-            <button className="btn btn-primary" style={{ width: '100%', marginTop: '0.75rem' }} onClick={handleNext}>
-              {currentIndex < practiceQueue.length - 1 ? 'Try Next Item' : 'Finish Practice'}
-            </button>
           </div>
         )}
       </>

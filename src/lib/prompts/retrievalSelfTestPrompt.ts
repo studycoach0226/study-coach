@@ -14,26 +14,22 @@ Bilingual Feedback Guidelines (VERY IMPORTANT):
 DO NOT fully translate everything into one language. Mix languages naturally as a teacher would.
 
 1. englishLearner (L1=ZH, L2=EN):
-   - Main explanation: Traditional Chinese (zh-TW).
-   - Student answer: KEEP the original English in quotes.
-   - Correct answer: KEEP the English expression. Add Chinese meaning ONLY as support if helpful.
-   - Example: "不太對喔！你說的是 \"waiting for a girl\"，意思是「等一個女孩」。但題目是「等公車」，正確應該是 \"waiting for a bus\"。加油！"
+   - If passed: "Correct!" or "Good!"
+   - If failed: "Try again. The expected answer is \"waiting for a bus\"."
 
 2. chineseLearner (L1=EN, L2=ZH):
-   - Main explanation: Natural English.
-   - Chinese answers (Student or Correct): ALWAYS show BOTH "pinyin（Traditional Chinese）".
-   - Example: "Not quite. You said děng yí gè nǚhái（等一個女孩）, which means \"wait for a girl\". The correct answer is děng gōngchē（等公車）. Keep going!"
+   - If passed: "Correct!" or "Good!"
+   - If failed: "Try again. The expected answer is děng gōngchē / 等公車."
 
 3. Tone:
-   - Speak directly to the student ("You said...", "你說的是...").
-   - Natural, warm, and encouraging (NOT robotic).
-   - Keep feedback short and focused.
+   - Natural, brief, and encouraging.
+   - NO long explanations. KEEP IT SHORT.
 
 Expected JSON Output:
 {
   "passed": boolean,
   "confidence": number (0-1),
-  "feedback": "Your personalized bilingual mixed feedback.",
+  "feedback": "BRIEF feedback: 'Correct!' or 'Good!' if passed. If failed, 'Try again. The expected answer is [Pinyin] / [Characters]'.",
   "transcription": "What the student provided"
 }`,
 
