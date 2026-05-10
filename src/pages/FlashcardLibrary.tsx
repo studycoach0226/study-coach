@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { db } from '../lib/db';
 import { LearningItem, StudentLearningRecord, ChunkItem, ChunkRecord } from '../lib/types';
 import { fetchAssignmentsByStudentId } from '../lib/readingContent';
-import { deleteFlashcardFromCloud } from '../lib/firebaseDb';
+import { deleteFlashcardFromCloud, getStudentFlashcards, mapFirestoreToLocal } from '../lib/firebaseDb';
 
 type AssignedReadingTask = {
   assignmentId: string;
@@ -19,7 +19,8 @@ type ViewMode = 'list' | 'cards';
 
 export default function FlashcardLibrary() {
   const navigate = useNavigate();
-  const studentId = db.getCurrentUserId();
+  const { studentId: routeStudentId } = useParams<{ studentId: string }>();
+  const studentId = routeStudentId || db.getCurrentUserId() || 'u0';
   const [items, setItems] = useState<{ item: LearningItem; record: StudentLearningRecord }[]>([]);
   // @ts-ignore - Temporarily unused but logic preserved
   const [assignedItems, setAssignedItems] = useState<AssignedReadingTask[]>([]);
@@ -43,8 +44,10 @@ export default function FlashcardLibrary() {
   const [saveMessage, setSaveMessage] = useState('');
 
   useEffect(() => {
-    const sId = db.getCurrentUserId();
+    const sId = studentId;
     if (!sId) return;
+
+    console.log(`[DEBUG] Loading FlashcardLibrary for studentId: ${sId}`);
 
     // Load Preferences
     const savedMode = localStorage.getItem(`flashcardLearningMode:${sId}`);
@@ -59,19 +62,37 @@ export default function FlashcardLibrary() {
       }
     }
 
+    // 1. Load Local Records (Initial cache)
     const allItems = db.getLearningItems();
     const studentRecords = db.getLearningRecords().filter(r => r.studentId === sId);
+    const localPairs = studentRecords
+      .map(record => ({ record, item: allItems.find(i => i.id === record.learningItemId)! }))
+      .filter(pair => pair.item && pair.item.itemType !== 'reading');
 
-    setItems(
-      studentRecords
-        .map(record => ({ record, item: allItems.find(i => i.id === record.learningItemId)! }))
-        .filter(pair => pair.item && pair.item.itemType !== 'reading')
-    );
+    console.log(`[DEBUG] Local records count: ${localPairs.length}`);
+    setItems(localPairs);
+
+    // 2. Fetch Cloud Records (Source of Truth)
+    getStudentFlashcards(sId).then(cloudDocs => {
+      console.log(`[DEBUG] Firebase records count: ${cloudDocs.length}`);
+      if (cloudDocs.length > 0) {
+        const cloudPairs = cloudDocs.map(doc => mapFirestoreToLocal(doc));
+        
+        // Merge or replace? For now, replace local with cloud if cloud has data
+        // to ensure cross-device consistency.
+        setItems(cloudPairs as any);
+        console.log(`[DEBUG] Final rendered records count (Cloud): ${cloudPairs.length}`);
+      } else {
+        console.log(`[DEBUG] Final rendered records count (Local): ${localPairs.length}`);
+      }
+    }).catch(err => {
+      console.error('[DEBUG] Failed to fetch cloud flashcards:', err);
+    });
 
     fetchAssignmentsByStudentId(sId)
       .then(assignments => setAssignedItems(assignments))
       .catch(() => setAssignedItems([]));
-  }, []);
+  }, [studentId]);
 
   const handleSavePreferences = () => {
     const sId = db.getCurrentUserId();
