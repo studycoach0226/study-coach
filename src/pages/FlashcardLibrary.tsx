@@ -62,29 +62,41 @@ export default function FlashcardLibrary() {
       }
     }
 
-    // 1. Load Local Records (Initial cache)
+    // 1. Load Local Records (Initial cache for faster startup)
     const allItems = db.getLearningItems();
     const studentRecords = db.getLearningRecords().filter(r => r.studentId === sId);
     const localPairs = studentRecords
       .map(record => ({ record, item: allItems.find(i => i.id === record.learningItemId)! }))
       .filter(pair => pair.item && pair.item.itemType !== 'reading');
 
-    console.log(`[DEBUG] Local records count: ${localPairs.length}`);
+    console.log(`[DEBUG] Local records count before sync: ${localPairs.length}`);
     setItems(localPairs);
 
     // 2. Fetch Cloud Records (Source of Truth)
     getStudentFlashcards(sId).then(cloudDocs => {
-      console.log(`[DEBUG] Firebase records count: ${cloudDocs.length}`);
-      if (cloudDocs.length > 0) {
-        const cloudPairs = cloudDocs.map(doc => mapFirestoreToLocal(doc));
-        
-        // Merge or replace? For now, replace local with cloud if cloud has data
-        // to ensure cross-device consistency.
-        setItems(cloudPairs as any);
-        console.log(`[DEBUG] Final rendered records count (Cloud): ${cloudPairs.length}`);
-      } else {
-        console.log(`[DEBUG] Final rendered records count (Local): ${localPairs.length}`);
+      console.log(`[DEBUG] Firebase records count fetched: ${cloudDocs.length}`);
+      
+      const cloudPairs = cloudDocs.map(doc => mapFirestoreToLocal(doc));
+      
+      // REQUIREMENT: Synchronize local db with Firebase to prevent stale deleted-card cache
+      // 1. Identify local records for THIS student that are missing from Firebase
+      const cloudItemIds = new Set(cloudPairs.map(p => p.item.id));
+      const staleLocalRecords = studentRecords.filter(r => !cloudItemIds.has(r.learningItemId));
+      
+      if (staleLocalRecords.length > 0) {
+        console.log(`[DEBUG] Local records removed because missing from Firebase: ${staleLocalRecords.length}`);
+        staleLocalRecords.forEach(r => db.deleteLearningRecord(r.id));
       }
+
+      // 2. Update/Add cloud records to local db to ensure consistency
+      cloudPairs.forEach(pair => {
+        db.updateLearningItem(pair.item);
+        db.saveLearningRecord(pair.record);
+      });
+
+      // 3. Render exactly the Firebase result (or empty if none)
+      setItems(cloudPairs as any);
+      console.log(`[DEBUG] Final rendered records count (Source of Truth): ${cloudPairs.length}`);
     }).catch(err => {
       console.error('[DEBUG] Failed to fetch cloud flashcards:', err);
     });
@@ -214,11 +226,18 @@ export default function FlashcardLibrary() {
     setBulkInput('');
   };
 
-  const handleDeleteCard = (recordId: string) => {
+  const handleDeleteCard = async (recordId: string) => {
     if (window.confirm('Delete this card?\nThis will remove it from your library.')) {
       const pair = items.find(p => p.record.id === recordId);
       if (pair) {
-        deleteFlashcardFromCloud(pair.record.studentId, pair.record.learningItemId).catch(() => { });
+        console.log(`[DEBUG] Delete target firebaseDocId/path: learningRecords/${pair.record.studentId}_${pair.record.learningItemId}`);
+        try {
+          await deleteFlashcardFromCloud(pair.record.studentId, pair.record.learningItemId);
+          console.log('[DEBUG] Delete success in Firebase');
+        } catch (err) {
+          console.error('[DEBUG] Delete failure in Firebase:', err);
+          alert('Failed to delete from cloud. Card may reappear.');
+        }
       }
       db.deleteLearningRecord(recordId);
       setItems(prev => prev.filter(p => p.record.id !== recordId));

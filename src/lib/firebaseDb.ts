@@ -15,6 +15,31 @@ import { firestore, storage } from './firebase';
 import { ChunkRecord, ChunkItem } from './learning-schema/types';
 
 /**
+ * Recursively removes undefined values from an object before saving to Firestore.
+ * Firestore does not support undefined values.
+ */
+export function sanitizeForFirestore(obj: any): any {
+  if (obj === null || typeof obj !== 'object') {
+    return obj;
+  }
+
+  // Handle Arrays
+  if (Array.isArray(obj)) {
+    return obj.map(v => sanitizeForFirestore(v)).filter(v => v !== undefined);
+  }
+
+  // Handle Objects
+  const sanitized: any = {};
+  Object.keys(obj).forEach(key => {
+    const value = sanitizeForFirestore(obj[key]);
+    if (value !== undefined) {
+      sanitized[key] = value;
+    }
+  });
+  return sanitized;
+}
+
+/**
  * Helper to upload a base64 string to Firebase Storage and return the download URL.
  * Handles both Data URLs (images) and raw base64 (audio).
  */
@@ -98,8 +123,11 @@ export async function saveFlashcard(record: ChunkRecord, item: ChunkItem) {
     console.log(`[DEBUG] Writing document to learningRecords`);
     console.log(`[DEBUG] Attempting to save to Firestore. Collection: 'learningRecords', Doc ID: '${docId}', Student ID: '${record.studentId}', Item ID: '${record.learningItemId}'`);
 
+    const sanitizedData = sanitizeForFirestore(firestoreData);
+    console.log('[DEBUG] Sanitized payload before Firestore write:', sanitizedData);
+
     // setDoc with { merge: true } acts as an upsert
-    await setDoc(docRef, firestoreData, { merge: true });
+    await setDoc(docRef, sanitizedData, { merge: true });
 
     console.log('[DEBUG] Firestore save success');
 
@@ -113,10 +141,12 @@ export async function saveFlashcard(record: ChunkRecord, item: ChunkItem) {
 export async function updateFlashcard(firestoreDocId: string, updates: Partial<any>) {
   try {
     const docRef = doc(firestore, 'learningRecords', firestoreDocId);
-    await updateDoc(docRef, {
+    const sanitizedUpdates = sanitizeForFirestore({
       ...updates,
       updatedAt: serverTimestamp()
     });
+    console.log('[DEBUG] Sanitized updates before Firestore update:', sanitizedUpdates);
+    await updateDoc(docRef, sanitizedUpdates);
   } catch (error) {
     console.error('Error updating flashcard in Firestore:', error);
     throw error;
