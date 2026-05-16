@@ -1,4 +1,5 @@
 import { useState, useRef } from 'react';
+import { startSafeMediaRecorder } from '../lib/audioRecorderUtils';
 
 interface AudioRecorderProps {
   customAudio?: string;
@@ -9,20 +10,22 @@ export default function AudioRecorder({ customAudio, onSave }: AudioRecorderProp
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const mimeTypeRef = useRef<string>('audio/webm');
 
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
+      const { recorder, mimeType } = await startSafeMediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
+      mimeTypeRef.current = mimeType;
       chunksRef.current = [];
 
-      mediaRecorder.ondataavailable = (e) => {
+      recorder.ondataavailable = (e) => {
         if (e.data.size > 0) chunksRef.current.push(e.data);
       };
 
-      mediaRecorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+      recorder.onstop = () => {
+        const blob = new Blob(chunksRef.current, { type: mimeTypeRef.current });
         const reader = new FileReader();
         reader.readAsDataURL(blob);
         reader.onloadend = () => {
@@ -34,10 +37,11 @@ export default function AudioRecorder({ customAudio, onSave }: AudioRecorderProp
         stream.getTracks().forEach(track => track.stop());
       };
 
-      mediaRecorder.start();
+      recorder.start();
       setIsRecording(true);
-    } catch (err) {
-      alert("Microphone access denied or an error occurred.");
+    } catch (err: any) {
+      console.error("[AudioRecorder] Error starting recording:", err);
+      alert(`Recording failed: ${err.message || "Microphone access denied or an error occurred."}`);
     }
   };
 

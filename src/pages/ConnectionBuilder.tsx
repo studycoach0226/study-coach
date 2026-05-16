@@ -468,7 +468,13 @@ export default function ConnectionBuilder() {
       while (n--) {
         u8arr[n] = bstr.charCodeAt(n);
       }
-      const filename = type === 'targetAudio' ? 'student-pronunciation.webm' : 'sentence-context.webm';
+      
+      let extension = 'webm';
+      if (mime.includes('mp4')) extension = 'mp4';
+      else if (mime.includes('aac')) extension = 'aac';
+      else if (mime.includes('ogg')) extension = 'ogg';
+
+      const filename = type === 'targetAudio' ? `student-pronunciation.${extension}` : `sentence-context.${extension}`;
       const file = new File([u8arr], filename, { type: mime });
 
       // 2. Upload

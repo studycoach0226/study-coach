@@ -5,6 +5,7 @@ import { fetchReadingArticleById, addReadingHistory } from '../lib/readingConten
 import { ReadingItem, StudentLearningRecord } from '../lib/types';
 import FinalSummary, { GapProgressItem } from '../components/FinalSummary';
 import { generateMeaningFromContext, evaluateRecording, EvaluationFeedback, ComprehensionFeedback, PronunciationFeedback } from '../lib/aiService';
+import { startSafeMediaRecorder } from '../lib/audioRecorderUtils';
 
 type ReadingStage = 'firstTry' | 'fixLearn' | 'finalTry';
 type GapType = 'pronunciation' | 'meaning';
@@ -81,6 +82,7 @@ export default function ReadingPractice() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const mimeTypeRef = useRef<string>('audio/webm');
 
   const [audioUrls, setAudioUrls] = useState<Record<TaskKey, string | null>>({
     first_explanation: null,
@@ -332,8 +334,9 @@ export default function ReadingPractice() {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       mediaStreamRef.current = stream;
 
-      const recorder = new MediaRecorder(stream);
+      const { recorder, mimeType } = await startSafeMediaRecorder(stream);
       mediaRecorderRef.current = recorder;
+      mimeTypeRef.current = mimeType;
       chunksRef.current = [];
 
       recorder.ondataavailable = (event) => {
@@ -343,7 +346,7 @@ export default function ReadingPractice() {
       };
 
       recorder.onstop = async () => {
-        const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+        const blob = new Blob(chunksRef.current, { type: mimeTypeRef.current });
         const url = URL.createObjectURL(blob);
         setAudioUrls((prev) => {
           const oldUrl = prev[taskKey];
@@ -371,8 +374,9 @@ export default function ReadingPractice() {
 
       recorder.start();
       setIsRecording(true);
-    } catch (error) {
-      setRecordingError('Microphone access failed.');
+    } catch (error: any) {
+      console.error("[ReadingPractice] Error starting recording:", error);
+      setRecordingError(`Recording failed: ${error.message || 'Microphone access failed.'}`);
       setIsRecording(false);
       stopTracks();
     }

@@ -115,9 +115,17 @@ export async function evaluateRecording(params: {
       audioBlob = params.audioBlobOrBase64;
     }
 
+    console.log(`[evaluateRecording] audio blob size: ${audioBlob.size} bytes`);
+    console.log(`[evaluateRecording] audio mimeType: ${audioBlob.type}`);
+
+    let extension = 'webm';
+    if (audioBlob.type.includes('mp4')) extension = 'mp4';
+    else if (audioBlob.type.includes('aac')) extension = 'aac';
+    else if (audioBlob.type.includes('ogg')) extension = 'ogg';
+
     // 2. Transcribe Audio (Whisper)
     const formData = new FormData();
-    formData.append('file', audioBlob, 'speech.webm');
+    formData.append('file', audioBlob, `speech.${extension}`);
     // Using the exact model requested by user
     formData.append('model', 'gpt-4o-mini-transcribe');
 
@@ -140,8 +148,10 @@ export async function evaluateRecording(params: {
 
     const transcribeData = await transcribeRes.json();
     const transcriptionText = transcribeData.text || '';
+    console.log(`[evaluateRecording] transcript value before evaluation: "${transcriptionText}"`);
 
     if (!transcriptionText.trim()) {
+      console.warn(`[evaluateRecording] Transcript is empty, returning early.`);
       return defaultErrorResponse('請再錄一次，確認麥克風有收音。');
     }
 
@@ -153,17 +163,21 @@ export async function evaluateRecording(params: {
       prompt = buildReadingReadPrompt(params.targetText, transcriptionText);
     }
 
+    const payload = {
+      model: 'gpt-4.1-mini', // As requested
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.2,
+    };
+    
+    console.log(`[evaluateRecording] AI evaluation payload:`, JSON.stringify(payload, null, 2));
+
     const chatRes = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`
       },
-      body: JSON.stringify({
-        model: 'gpt-4.1-mini', // As requested
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.2,
-      })
+      body: JSON.stringify(payload)
     });
 
     if (!chatRes.ok) {
@@ -177,6 +191,7 @@ export async function evaluateRecording(params: {
     // Parse JSON safely in case it returns markdown formatting
     const cleanedJson = content.replace(/```json/g, '').replace(/```/g, '').trim();
     const result = JSON.parse(cleanedJson);
+    console.log(`[evaluateRecording] AI evaluation result:`, result);
 
     if (params.taskType === 'explain') {
       // The new prompt doesn't necessarily return a single 'score', 

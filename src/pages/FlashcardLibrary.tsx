@@ -75,14 +75,14 @@ export default function FlashcardLibrary() {
     // 2. Fetch Cloud Records (Source of Truth)
     getStudentFlashcards(sId).then(cloudDocs => {
       console.log(`[DEBUG] Firebase records count fetched: ${cloudDocs.length}`);
-      
+
       const cloudPairs = cloudDocs.map(doc => mapFirestoreToLocal(doc));
-      
+
       // REQUIREMENT: Synchronize local db with Firebase to prevent stale deleted-card cache
       // 1. Identify local records for THIS student that are missing from Firebase
       const cloudItemIds = new Set(cloudPairs.map(p => p.item.id));
       const staleLocalRecords = studentRecords.filter(r => !cloudItemIds.has(r.learningItemId));
-      
+
       if (staleLocalRecords.length > 0) {
         console.log(`[DEBUG] Local records removed because missing from Firebase: ${staleLocalRecords.length}`);
         staleLocalRecords.forEach(r => db.deleteLearningRecord(r.id));

@@ -9,6 +9,7 @@ import { templateBank } from '../lib/retrievable/templateBank';
 import { GeneratedTask } from '../lib/retrievable/types';
 import { playUnifiedAudio } from '../lib/audioUtils';
 import { evaluateTypedAnswer } from '../lib/aiService';
+import { startSafeMediaRecorder } from '../lib/audioRecorderUtils';
 
 export default function RetrievalPractice() {
   const navigate = useNavigate();
@@ -279,11 +280,11 @@ export default function RetrievalPractice() {
       setTranscript('');
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const recorder = new MediaRecorder(stream);
+        const { recorder, mimeType } = await startSafeMediaRecorder(stream);
         const chunks: Blob[] = [];
         recorder.ondataavailable = (e) => chunks.push(e.data);
         recorder.onstop = () => {
-          const blob = new Blob(chunks, { type: 'audio/webm' });
+          const blob = new Blob(chunks, { type: mimeType });
           setRecordedBlobUrl(URL.createObjectURL(blob));
           setValidationError(null);
         };
@@ -329,8 +330,9 @@ export default function RetrievalPractice() {
         setIsRecording(true);
         setRecordedBlobUrl(null);
         setValidationError(null);
-      } catch (err) {
+      } catch (err: any) {
         console.error("Failed to start recording:", err);
+        setValidationError(`Recording failed: ${err.message || 'Microphone access denied'}`);
       }
     }
   };
