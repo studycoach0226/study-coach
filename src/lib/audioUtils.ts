@@ -126,12 +126,12 @@ export function playCardAIVoice(
   item: any,
   record: any,
   type: 'focusExpression' | 'chunk',
-  learnerType: 'english' | 'chinese',
   voicePref: VoicePreference = 'system',
   source: string = 'Unknown'
 ) {
+  const isChineseLearner = item?.languageDirection === 'zh-en';
   const url = type === 'focusExpression' ? audioUrls?.aiWord : audioUrls?.aiChunk;
-  const lang = learnerType === 'chinese' ? 'zh-TW' : 'en-US';
+  const lang = isChineseLearner ? 'zh-TW' : 'en-US';
 
   if (url) {
     console.log(`[DEBUG] ${source} | Playing existing AI audio URL:`, url);
@@ -144,7 +144,7 @@ export function playCardAIVoice(
     ? (record?.studentConnections?.customFocusExpression || item?.focusExpression)
     : (record?.studentConnections?.customChunk || item?.chunk);
 
-  if (learnerType === 'chinese') {
+  if (isChineseLearner) {
      if (type === 'focusExpression') {
        ttsText = record?.studentConnections?.targetText || record?.targetText || item?.targetText || item?.focusExpression;
      } else {

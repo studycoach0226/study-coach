@@ -304,7 +304,6 @@ export default function FlashcardLibrary() {
                                item,
                                record,
                                'focusExpression',
-                               learnerType === 'chinese' ? 'chinese' : 'english',
                                'system',
                                'FlashcardLibrary'
                              );
@@ -433,7 +432,6 @@ export default function FlashcardLibrary() {
                           item,
                           record,
                           'focusExpression',
-                          learnerType === 'chinese' ? 'chinese' : 'english',
                           'system',
                           'FlashcardLibrary'
                         );

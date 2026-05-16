@@ -289,7 +289,6 @@ export default function ConnectionBuilder() {
       currentItem, 
       currentRecord, 
       type, 
-      isChineseLearner ? 'chinese' : 'english', 
       voicePref, 
       'ConnectionBuilder'
     );
