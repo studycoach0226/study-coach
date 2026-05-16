@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams, useParams } from 'react-router-dom';
 import { db } from '../lib/db';
 import { LearningItem, StudentLearningRecord, ConnectionFields, ChunkItem, ChunkRecord, SelectedConnection } from '../lib/types';
 import AudioRecorder from '../components/AudioRecorder';
-import { playUnifiedAudio, getAvailableGenders } from '../lib/audioUtils';
+import { playUnifiedAudio, getAvailableGenders, playCardAIVoice } from '../lib/audioUtils';
 import { saveFlashcard, getFlashcardRecord, mapFirestoreToLocal } from '../lib/firebaseDb';
 import { getActiveEncodingFields, MediaMetadata } from '../config/encodingSchema';
 import { uploadAudioFile } from '../lib/storageUtils';
@@ -284,27 +284,15 @@ export default function ConnectionBuilder() {
     }
 
     // AI Source
-    url = type === 'focusExpression' ? audioUrls.aiWord : audioUrls.aiChunk;
-    
-    if (url) {
-      playUnifiedAudio('', url, lang, voicePref);
-      return;
-    }
-
-    // AI TTS Fallback
-    let ttsText = type === 'focusExpression' ? editableFocusExpression : editableChunk;
-    if (isChineseLearner) {
-       // Prioritize characters for Chinese TTS
-       if (type === 'focusExpression') {
-         ttsText = editableTargetText || editableFocusExpression;
-       } else {
-         ttsText = editableContextText || editableChunk;
-       }
-    }
-    
-    if (ttsText) {
-      playUnifiedAudio(ttsText, undefined, lang, voicePref);
-    }
+    playCardAIVoice(
+      audioUrls, 
+      currentItem, 
+      currentRecord, 
+      type, 
+      isChineseLearner ? 'chinese' : 'english', 
+      voicePref, 
+      'ConnectionBuilder'
+    );
   };
 
 
@@ -399,6 +387,9 @@ export default function ConnectionBuilder() {
     };
 
     const status = isValid ? 'done' : 'pending';
+    console.log(`[DEBUG] ConnectionBuilder Saving Flashcard`);
+    console.log(`[DEBUG] Card ID: ${currentRecord.id}`);
+    console.log(`[DEBUG] Payload audioUrls:`, finalAudioUrls);
     console.log(`[DEBUG] Save payload encodingStatus: ${status}`);
 
     const updatedRecord: any = {

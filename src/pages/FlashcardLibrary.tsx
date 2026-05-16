@@ -4,6 +4,7 @@ import { db } from '../lib/db';
 import { LearningItem, StudentLearningRecord, ChunkItem, ChunkRecord } from '../lib/types';
 import { fetchAssignmentsByStudentId } from '../lib/readingContent';
 import { deleteFlashcardFromCloud, getStudentFlashcards, mapFirestoreToLocal } from '../lib/firebaseDb';
+import { playCardAIVoice } from '../lib/audioUtils';
 
 type AssignedReadingTask = {
   assignmentId: string;
@@ -268,6 +269,7 @@ export default function FlashcardLibrary() {
                 <th style={{ paddingBottom: '0.75rem', paddingRight: '1rem' }}>Chinese Characters</th>
               )}
               <th style={{ paddingBottom: '0.75rem', paddingRight: '1rem' }}>Meaning</th>
+              <th style={{ paddingBottom: '0.75rem', paddingRight: '1rem' }}>Audio</th>
               <th style={{ paddingBottom: '0.75rem', paddingRight: '1rem' }}>Encoding</th>
               <th style={{ paddingBottom: '0.75rem' }}>Action</th>
             </tr>
@@ -289,6 +291,46 @@ export default function FlashcardLibrary() {
                   )}
                   <td style={{ color: 'var(--text-muted)', paddingRight: '1rem' }}>
                     <div style={{ fontWeight: 'bold', color: 'var(--text-main)' }}>{(record as ChunkRecord).studentConnections?.customTranslation || (item as ChunkItem).chunkTranslation || '-'}</div>
+                  </td>
+                  <td style={{ paddingRight: '1rem' }}>
+                    <div style={{ display: 'flex', gap: '0.25rem', flexWrap: 'wrap' }}>
+                        <button
+                           className="btn btn-outline"
+                           style={{ padding: '0.2rem 0.4rem', fontSize: '0.75rem', borderRadius: '4px', background: '#eff6ff', color: 'var(--primary)', border: '1px solid #dbeafe' }}
+                           onClick={(e) => {
+                             e.stopPropagation();
+                             playCardAIVoice(
+                               (record as ChunkRecord).audioUrls,
+                               item,
+                               record,
+                               'focusExpression',
+                               learnerType === 'chinese' ? 'chinese' : 'english',
+                               'system',
+                               'FlashcardLibrary'
+                             );
+                           }}
+                           title="Play AI Voice"
+                        >
+                           🔊 AI Voice
+                        </button>
+                      
+                      {isComplete && (((record as ChunkRecord).audioUrls?.studentWord || (record as ChunkRecord).audioUrls?.focusExpression || (record as ChunkRecord).audioUrls?.word) ? (
+                        <button
+                           className="btn btn-outline"
+                           style={{ padding: '0.2rem 0.4rem', fontSize: '0.75rem', borderRadius: '4px', background: '#f0fdf4', color: '#166534', border: '1px solid #bbf7d0' }}
+                           onClick={(e) => {
+                             e.stopPropagation();
+                             const url = (record as ChunkRecord).audioUrls?.studentWord || (record as ChunkRecord).audioUrls?.focusExpression || (record as ChunkRecord).audioUrls?.word;
+                             if (url) new Audio(url).play().catch(() => {});
+                           }}
+                           title="Play My Voice"
+                        >
+                           🎤 My Voice
+                        </button>
+                      ) : (
+                        <button className="btn btn-outline" style={{ padding: '0.2rem 0.4rem', fontSize: '0.75rem', borderRadius: '4px', opacity: 0.5, cursor: 'not-allowed' }} disabled>🎤 My Voice</button>
+                      ))}
+                    </div>
                   </td>
                   <td style={{ paddingRight: '1rem' }}>
                     {isComplete ? (
@@ -379,6 +421,39 @@ export default function FlashcardLibrary() {
                 </div>
                 <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', lineHeight: 1.4 }}>
                   <div style={{ fontWeight: 'bold' }}>{(record as ChunkRecord).studentConnections?.customTranslation || (item as ChunkItem).chunkTranslation || '-'}</div>
+                </div>
+                <div style={{ display: 'flex', gap: '0.25rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
+                  <button
+                      className="btn btn-outline"
+                      style={{ padding: '0.15rem 0.3rem', fontSize: '0.7rem', borderRadius: '4px', background: '#eff6ff', color: 'var(--primary)', border: '1px solid #dbeafe' }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        playCardAIVoice(
+                          (record as ChunkRecord).audioUrls,
+                          item,
+                          record,
+                          'focusExpression',
+                          learnerType === 'chinese' ? 'chinese' : 'english',
+                          'system',
+                          'FlashcardLibrary'
+                        );
+                      }}
+                  >
+                      🔊 AI Voice
+                  </button>
+                  {(isComplete && ((record as ChunkRecord).audioUrls?.studentWord || (record as ChunkRecord).audioUrls?.focusExpression || (record as ChunkRecord).audioUrls?.word)) ? (
+                    <button
+                        className="btn btn-outline"
+                        style={{ padding: '0.15rem 0.3rem', fontSize: '0.7rem', borderRadius: '4px', background: '#f0fdf4', color: '#166534', border: '1px solid #bbf7d0' }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const url = (record as ChunkRecord).audioUrls?.studentWord || (record as ChunkRecord).audioUrls?.focusExpression || (record as ChunkRecord).audioUrls?.word;
+                          if (url) new Audio(url).play().catch(() => {});
+                        }}
+                    >
+                        🎤 My Voice
+                    </button>
+                  ) : null}
                 </div>
               </div>
               <div style={{ marginTop: '0.25rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

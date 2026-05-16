@@ -68,9 +68,18 @@ export function getPreferredVoice(lang: 'en-US' | 'zh-TW', preference: VoicePref
       || null;
 }
 
-export function playUnifiedAudio(text: string, customAudio?: string, lang: 'en-US' | 'zh-TW' = 'en-US', preference: VoicePreference = 'system') {
+export function playUnifiedAudio(
+  text: string, 
+  customAudio?: string, 
+  lang: 'en-US' | 'zh-TW' = 'en-US', 
+  preference: VoicePreference = 'system',
+  source?: string
+) {
   // If we have a custom recording, play it regardless of language
   if (customAudio) {
+    if (source) {
+      console.log(`[DEBUG] ${source} | Playing custom audio via playUnifiedAudio`);
+    }
     const audio = new Audio(customAudio);
     audio.play();
     return;
@@ -81,12 +90,22 @@ export function playUnifiedAudio(text: string, customAudio?: string, lang: 'en-U
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = lang;
+    utterance.rate = 1.0;
+    utterance.pitch = 1.0;
     
     const trySpeak = () => {
       const bestVoice = getPreferredVoice(lang, preference);
       if (bestVoice) {
          utterance.voice = bestVoice;
       }
+
+      if (source) {
+        console.log(`[DEBUG] TTS Playback from: ${source}`);
+        console.log(`[DEBUG] Spoken text: ${text}`);
+        console.log(`[DEBUG] Selected voice: ${bestVoice?.name || 'default'}`);
+        console.log(`[DEBUG] Lang: ${utterance.lang}, Rate: ${utterance.rate}, Pitch: ${utterance.pitch}`);
+      }
+      
       window.speechSynthesis.speak(utterance);
     };
 
@@ -99,5 +118,43 @@ export function playUnifiedAudio(text: string, customAudio?: string, lang: 'en-U
     } else {
       trySpeak();
     }
+  }
+}
+
+export function playCardAIVoice(
+  audioUrls: any,
+  item: any,
+  record: any,
+  type: 'focusExpression' | 'chunk',
+  learnerType: 'english' | 'chinese',
+  voicePref: VoicePreference = 'system',
+  source: string = 'Unknown'
+) {
+  const url = type === 'focusExpression' ? audioUrls?.aiWord : audioUrls?.aiChunk;
+  const lang = learnerType === 'chinese' ? 'zh-TW' : 'en-US';
+
+  if (url) {
+    console.log(`[DEBUG] ${source} | Playing existing AI audio URL:`, url);
+    playUnifiedAudio('', url, lang, voicePref, source);
+    return;
+  }
+
+  // Fallback to TTS
+  let ttsText = type === 'focusExpression' 
+    ? (record?.studentConnections?.customFocusExpression || item?.focusExpression)
+    : (record?.studentConnections?.customChunk || item?.chunk);
+
+  if (learnerType === 'chinese') {
+     if (type === 'focusExpression') {
+       ttsText = record?.studentConnections?.targetText || record?.targetText || item?.targetText || item?.focusExpression;
+     } else {
+       ttsText = record?.studentConnections?.contextText || record?.contextText || item?.contextText || item?.chunk;
+     }
+  }
+
+  if (ttsText) {
+    playUnifiedAudio(ttsText, undefined, lang, voicePref, source);
+  } else {
+    console.warn(`[DEBUG] ${source} | No text found for TTS fallback`);
   }
 }
