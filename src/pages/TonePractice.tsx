@@ -2,14 +2,12 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { getStudentFlashcards, mapFirestoreToLocal, logRetrievalAttempt } from '../lib/firebaseDb';
 import { db } from '../lib/db';
-import { LearningItem, StudentLearningRecord, ChunkItem, ReadingItem, ChunkRecord } from '../lib/types';
+import { LearningItem, StudentLearningRecord, ChunkItem, ReadingItem } from '../lib/types';
 import { retrievalEngine } from '../lib/retrievable/retrievalEngine';
 import { assignmentStore } from '../lib/retrievable/assignmentStore';
 import { templateBank } from '../lib/retrievable/templateBank';
 import { GeneratedTask } from '../lib/retrievable/types';
-import { playUnifiedAudio } from '../lib/audioUtils';
 import { evaluateTypedAnswer } from '../lib/aiService';
-import { startSafeMediaRecorder } from '../lib/audioRecorderUtils';
 
 const SPEECH_API_BASE = (import.meta as any).env.VITE_SPEECH_API_BASE || "http://localhost:8000";
 
@@ -29,17 +27,11 @@ export default function TonePractice() {
   const [isRecording, setIsRecording] = useState(false);
   const [isEvaluating, setIsEvaluating] = useState(false);
   const [recordedBlobUrl, setRecordedBlobUrl] = useState<string | null>(null);
-  const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [transcript, setTranscript] = useState('');
-  const [recognition, setRecognition] = useState<any>(null);
   const [voicePref, setVoicePref] = useState<'female' | 'male' | 'system'>('system');
   const [targetCurve, setTargetCurve] = useState<number[]>([]);
   const [userCurve, setUserCurve] = useState<number[]>([]);
-
-  const wsRef = useRef<WebSocket | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const processorRef = useRef<ScriptProcessorNode | null>(null);
 
   const toneWsRef = useRef<WebSocket | null>(null);
   const toneCtxRef = useRef<AudioContext | null>(null);
@@ -207,6 +199,30 @@ export default function TonePractice() {
     }
   };
 
+  const handlePrevCard = () => {
+    if (currentIndex > 0) {
+      setCurrentIndex(currentIndex - 1);
+      setUserCurve([]);
+      setRecordedBlobUrl(null);
+      setTranscript('');
+      setFeedback(null);
+      setShowHints(false);
+      setValidationError(null);
+    }
+  };
+
+  const handleNextCard = () => {
+    if (currentIndex < practiceQueue.length - 1) {
+      setCurrentIndex(currentIndex + 1);
+      setUserCurve([]);
+      setRecordedBlobUrl(null);
+      setTranscript('');
+      setFeedback(null);
+      setShowHints(false);
+      setValidationError(null);
+    }
+  };
+
   const submitEval = async () => {
     setIsEvaluating(true);
     setValidationError(null);
@@ -272,98 +288,7 @@ export default function TonePractice() {
     }
   };
 
-  const handleToggleRecording = async () => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-
-    if (isRecording) {
-      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-        mediaRecorder.stop();
-        mediaRecorder.stream.getTracks().forEach(track => track.stop());
-      }
-      if (recognition) {
-        recognition.stop();
-      }
-
-      // 🛑 停止語調串流 (Demo 邏輯)
-      if (wsRef.current) wsRef.current.close();
-      if (processorRef.current) processorRef.current.disconnect();
-      if (audioContextRef.current) audioContextRef.current.close();
-
-      setIsRecording(false);
-    } else {
-      setTranscript('');
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-
-        // 🔥 建立 WebSocket 與 AudioContext (直接複製 Demo)
-        const ws = new WebSocket("ws://localhost:8000/ws/pitch");
-        ws.binaryType = "arraybuffer";
-        wsRef.current = ws;
-
-        ws.onmessage = (event) => {
-          const pitch = JSON.parse(event.data);
-          setUserCurve(pitch);
-        };
-
-        const audioContext = new AudioContext();
-        audioContextRef.current = audioContext;
-        const source = audioContext.createMediaStreamSource(stream);
-        const processor = audioContext.createScriptProcessor(1024, 1, 1);
-        processorRef.current = processor;
-
-        processor.onaudioprocess = (e) => {
-          const input = e.inputBuffer.getChannelData(0);
-          if (ws.readyState === 1) {
-            ws.send(input.buffer);
-          }
-        };
-
-        source.connect(processor);
-        processor.connect(audioContext.destination);
-
-        const { recorder, mimeType } = await startSafeMediaRecorder(stream);
-        const chunks: Blob[] = [];
-        recorder.ondataavailable = (e) => chunks.push(e.data);
-        recorder.onstop = () => {
-          const blob = new Blob(chunks, { type: mimeType });
-          setRecordedBlobUrl(URL.createObjectURL(blob));
-          setValidationError(null);
-        };
-        recorder.start();
-        setMediaRecorder(recorder);
-
-        if (SpeechRecognition) {
-          const recognizer = new SpeechRecognition();
-          // Tone Practice always expects Chinese speech
-          recognizer.lang = 'zh-TW';
-
-          recognizer.continuous = true;
-          recognizer.interimResults = true;
-
-          recognizer.onresult = (event: any) => {
-            let finalTranscript = '';
-            for (let i = event.resultIndex; i < event.results.length; ++i) {
-              if (event.results[i].isFinal) {
-                finalTranscript += event.results[i][0].transcript;
-              }
-            }
-            if (finalTranscript) setTranscript(finalTranscript);
-          };
-
-          // 💡 Minimal bypass: 暫時不啟動語音辨識
-          // recognizer.start();
-          // setRecognition(recognizer);
-        }
-
-        setIsRecording(true);
-        setRecordedBlobUrl(null);
-        setValidationError(null);
-      } catch (err: any) {
-        console.error("Failed to start recording:", err);
-        setValidationError(`Recording failed: ${err.message || 'Microphone access denied'}`);
-      }
-    }
-  };
+  // handleToggleRecording was removed because it was unused and caused build errors.
 
   const startToneRecording = async () => {
     try {
@@ -460,35 +385,14 @@ export default function TonePractice() {
     setIsRecording(false);
   };
 
-  const getTtsText = (item: LearningItem, record: StudentLearningRecord, type: 'focusExpression' | 'chunk'): string => {
-    const isChineseLearner = item.languageDirection === 'zh-en';
-    const chunkItem = item as ChunkItem;
-    const chunkRecord = record as ChunkRecord;
-
-    if (isChineseLearner) {
-      if (type === 'focusExpression') {
-        // Preference: targetText (Chinese characters) > targetExpression (Pinyin)
-        return chunkRecord?.studentConnections?.targetText || chunkItem?.targetText || chunkItem?.focusExpression || '';
-      } else {
-        // Preference: contextText (Chinese sentence) > context (Pinyin sentence)
-        return chunkRecord?.studentConnections?.contextText || chunkItem?.contextText || chunkItem?.chunk || '';
-      }
-    } else {
-      // English learner: use standard fields
-      if (type === 'focusExpression') {
-        return chunkItem?.focusExpression || '';
-      } else {
-        return chunkItem?.chunk || '';
-      }
-    }
-  };
+  // getTtsText was removed because it was unused and caused build errors.
 
   const renderPitchLine = (data: number[], color: string, strokeWidth: number, opacity = 1) => {
     if (!data || data.length < 2) return null;
 
     const SVG_WIDTH = 500;
-    const SVG_HEIGHT = 240;
-    const MIDDLE_Y = 120; // Center for 240px height
+    const SVG_HEIGHT = 300;
+    const MIDDLE_Y = 150; // Center for 300px height
     const SAFE_TOP = 12;
     const SAFE_BOTTOM = SVG_HEIGHT - 12;
 
@@ -551,43 +455,7 @@ export default function TonePractice() {
       audio.play();
     }
   };
-  const speak = (text: string, record?: StudentLearningRecord, type: 'focusExpression' | 'chunk' | 'other' = 'other', source: 'ai' | 'student' = 'ai') => {
-    const currentItem = practiceQueue[currentIndex]?.item as ChunkItem;
-    const isChineseLearner = currentItem?.languageDirection === 'zh-en';
-    const isChineseTTS = isChineseLearner || (currentItem?.languageDirection === 'en-zh' && type === 'other' && text.match(/[\u4e00-\u9fa5]/));
-    const lang = isChineseTTS ? 'zh-TW' : 'en-US';
-
-    if (source === 'student') {
-      const studentUrl = type === 'focusExpression'
-        ? (record?.audioUrls?.studentWord || record?.audioUrls?.word)
-        : (record?.audioUrls?.studentChunk || record?.audioUrls?.chunk);
-
-      if (studentUrl) {
-        playUnifiedAudio('', studentUrl, lang, voicePref);
-      } else {
-        alert("No recording yet. Please record first.");
-      }
-      return;
-    }
-
-    // AI Source - Strictly TTS or AI stored URL
-    const aiUrl = type === 'focusExpression' ? record?.audioUrls?.aiWord : record?.audioUrls?.aiChunk;
-
-    if (aiUrl) {
-      playUnifiedAudio('', aiUrl, lang, voicePref);
-      return;
-    }
-
-    // AI TTS Fallback
-    let ttsText = text;
-    if (record && (type === 'focusExpression' || type === 'chunk')) {
-      ttsText = getTtsText(currentItem, record, type);
-    }
-
-    if (ttsText) {
-      playUnifiedAudio(ttsText, undefined, lang, voicePref);
-    }
-  };
+  // speak was removed because it was unused and caused build errors.
 
 
 
@@ -681,7 +549,7 @@ export default function TonePractice() {
   const renderTestInput = () => {
     const current = practiceQueue[currentIndex];
     if (!current) return null;
-    const isChineseLearner = current.item.languageDirection === 'zh-en';
+    // isChineseLearner was removed because it was unused and caused build errors.
 
     if (isEvaluating) {
       return (
@@ -881,7 +749,7 @@ export default function TonePractice() {
             margin: '0 auto 2rem',
             width: '100%',
             maxWidth: '600px',
-            height: '240px', // 💡 增加高度
+            height: '300px', // 💡 對齊 Demo 高度
             background: '#f8fafc',
             borderRadius: '12px',
             border: '1px solid var(--border)',
@@ -890,10 +758,33 @@ export default function TonePractice() {
             justifyContent: 'center',
             position: 'relative'
           }}>
-            <svg width="500" height="240" style={{ overflow: 'visible' }}> {/* 💡 增加高度 */}
+            <svg width="500" height="300" style={{ overflow: 'visible' }}> {/* 💡 對齊 Demo 高度 */}
               {renderPitchLine(targetCurve, "#ff4d4d", 4, 0.8)}
               {renderPitchLine(userCurve, "#00d2ff", 4, 1)}
             </svg>
+          </div>
+
+          {/* Card Navigation Controls */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', maxWidth: '500px', margin: '0 auto 1rem' }}>
+            <button 
+              className="btn btn-outline" 
+              onClick={handlePrevCard}
+              disabled={currentIndex === 0}
+              style={{ padding: '0.5rem 1rem' }}
+            >
+              ⬅️ Previous
+            </button>
+            <span style={{ fontWeight: 'bold', color: 'var(--text-muted)' }}>
+              {currentIndex + 1} / {practiceQueue.length}
+            </span>
+            <button 
+              className="btn btn-outline" 
+              onClick={handleNextCard}
+              disabled={currentIndex === practiceQueue.length - 1}
+              style={{ padding: '0.5rem 1rem' }}
+            >
+              Next ➡️
+            </button>
           </div>
 
           {renderTestInput()}
