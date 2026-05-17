@@ -4,6 +4,7 @@ import './index.css';
 import RoleSwitcher from './pages/RoleSwitcher';
 import ConnectionBuilder from './pages/ConnectionBuilder';
 import RetrievalPractice from './pages/RetrievalPractice';
+import TonePractice from './pages/TonePractice';
 import ReportCard from './pages/ReportCard';
 import TeacherDashboard from './pages/TeacherDashboard';
 import StudentDetailReport from './pages/StudentDetailReport';
@@ -40,6 +41,7 @@ export default function App() {
           <Route path="/student/:studentId/word/:id" element={<WordCard />} />
           <Route path="/student/:studentId/flashcards" element={<FlashcardLibrary />} />
           <Route path="/student/:studentId/practice" element={<RetrievalPractice />} />
+          <Route path="/student/:studentId/tone-practice" element={<TonePractice />} />
           <Route path="/student/:studentId/report" element={<ReportCard />} />
           <Route path="/student/:studentId/assignments" element={<StudentAssignments />} />
           <Route path="/student/:studentId/reading" element={<StudentReading />} />
@@ -53,6 +55,7 @@ export default function App() {
           <Route path="/student/word/:id" element={<WordCard />} />
           <Route path="/student/flashcards" element={<FlashcardLibrary />} />
           <Route path="/student/practice" element={<RetrievalPractice />} />
+          <Route path="/student/tone-practice" element={<TonePractice />} />
           <Route path="/student/report" element={<ReportCard />} />
           <Route path="/student/assignments" element={<StudentAssignments />} />
           <Route path="/student/reading-practice/:itemId" element={<ReadingPractice />} />
