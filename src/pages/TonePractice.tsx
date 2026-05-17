@@ -36,11 +36,11 @@ export default function TonePractice() {
   const [voicePref, setVoicePref] = useState<'female' | 'male' | 'system'>('system');
   const [targetCurve, setTargetCurve] = useState<number[]>([]);
   const [userCurve, setUserCurve] = useState<number[]>([]);
-  
+
   const wsRef = useRef<WebSocket | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
-  
+
   const toneWsRef = useRef<WebSocket | null>(null);
   const toneCtxRef = useRef<AudioContext | null>(null);
   const toneProcessorRef = useRef<ScriptProcessorNode | null>(null);
@@ -283,18 +283,18 @@ export default function TonePractice() {
       if (recognition) {
         recognition.stop();
       }
-      
+
       // 🛑 停止語調串流 (Demo 邏輯)
       if (wsRef.current) wsRef.current.close();
       if (processorRef.current) processorRef.current.disconnect();
       if (audioContextRef.current) audioContextRef.current.close();
-      
+
       setIsRecording(false);
     } else {
       setTranscript('');
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        
+
         // 🔥 建立 WebSocket 與 AudioContext (直接複製 Demo)
         const ws = new WebSocket("ws://localhost:8000/ws/pitch");
         ws.binaryType = "arraybuffer";
@@ -371,15 +371,15 @@ export default function TonePractice() {
 
       const recorder = new MediaRecorder(stream);
       const chunks: Blob[] = [];
-      
+
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) chunks.push(e.data);
       };
 
       recorder.onstop = () => {
-        const blob = new Blob(chunks, { type: 'audio/webm' }); 
+        const blob = new Blob(chunks, { type: 'audio/webm' });
         const url = URL.createObjectURL(blob);
-        setRecordedBlobUrl(url); 
+        setRecordedBlobUrl(url);
       };
 
       recorder.start();
@@ -437,9 +437,9 @@ export default function TonePractice() {
     }
 
     setTimeout(() => {
-      const currentWs = toneWsRef.current; 
+      const currentWs = toneWsRef.current;
       if (currentWs && currentWs.readyState === WebSocket.OPEN) {
-        currentWs.close(1000, "Normal Closure"); 
+        currentWs.close(1000, "Normal Closure");
       }
     }, 50);
 
@@ -447,10 +447,10 @@ export default function TonePractice() {
       if (toneCtxRef.current && toneCtxRef.current.state !== 'closed') {
         toneCtxRef.current.close();
       }
-      
+
       if (toneMediaRecorderRef.current && toneMediaRecorderRef.current.stream) {
         toneMediaRecorderRef.current.stream.getTracks().forEach(track => {
-          track.stop(); 
+          track.stop();
         });
       }
     } catch (e) {
@@ -487,7 +487,10 @@ export default function TonePractice() {
     if (!data || data.length < 2) return null;
 
     const SVG_WIDTH = 500;
+    const SVG_HEIGHT = 240;
     const MIDDLE_Y = 120; // Center for 240px height
+    const SAFE_TOP = 12;
+    const SAFE_BOTTOM = SVG_HEIGHT - 12;
 
     const validPoints = data.filter(v => v > 0);
     if (validPoints.length === 0) return null;
@@ -498,8 +501,12 @@ export default function TonePractice() {
     return data.map((v, i) => {
       if (i === 0 || v <= 0 || data[i - 1] <= 0) return null;
 
-      const y1 = MIDDLE_Y - (data[i - 1] - avg) * 6;
-      const y2 = MIDDLE_Y - (v - avg) * 6;
+      let y1 = MIDDLE_Y - (data[i - 1] - avg) * 6;
+      let y2 = MIDDLE_Y - (v - avg) * 6;
+
+      // Clamp values to keep inside chart
+      y1 = Math.max(SAFE_TOP, Math.min(SAFE_BOTTOM, y1));
+      y2 = Math.max(SAFE_TOP, Math.min(SAFE_BOTTOM, y2));
 
       return (
         <line
@@ -759,7 +766,7 @@ export default function TonePractice() {
       <>
         <div style={{ padding: '1.5rem', background: '#f0fdf4', borderRadius: '12px', border: '1px solid #bbf7d0', textAlign: 'center', margin: '1rem 0' }}>
           <h3 style={{ color: '#166534', marginBottom: '1rem' }}>Tone practice recorded</h3>
-          
+
           <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center' }}>
             {recordedBlobUrl && (
               <button className="btn btn-outline" style={{ background: '#fff' }} onClick={playRecording}>▶️ Play</button>
