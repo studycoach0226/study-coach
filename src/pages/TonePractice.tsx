@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { getStudentFlashcards, mapFirestoreToLocal, logRetrievalAttempt } from '../lib/firebaseDb';
 import { db } from '../lib/db';
@@ -35,6 +35,16 @@ export default function TonePractice() {
   const [recognition, setRecognition] = useState<any>(null);
   const [voicePref, setVoicePref] = useState<'female' | 'male' | 'system'>('system');
   const [targetCurve, setTargetCurve] = useState<number[]>([]);
+  const [userCurve, setUserCurve] = useState<number[]>([]);
+  
+  const wsRef = useRef<WebSocket | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  
+  const toneWsRef = useRef<WebSocket | null>(null);
+  const toneCtxRef = useRef<AudioContext | null>(null);
+  const toneProcessorRef = useRef<ScriptProcessorNode | null>(null);
+  const toneMediaRecorderRef = useRef<MediaRecorder | null>(null);
 
   useEffect(() => {
     const sId = routeStudentId || db.getCurrentUserId();
@@ -57,7 +67,7 @@ export default function TonePractice() {
         // 2. Sync local db with Firebase
         const studentRecords = db.getLearningRecords().filter(r => r.studentId === sId);
         const cloudItemIds = new Set(cloudPairs.map(p => p.item.id));
-        
+
         const staleLocalRecords = studentRecords.filter(r => !cloudItemIds.has(r.learningItemId));
         if (staleLocalRecords.length > 0) {
           console.log(`[DEBUG] Removing ${staleLocalRecords.length} stale local records missing from Firebase`);
@@ -140,9 +150,9 @@ export default function TonePractice() {
         const finalQueue = [...dueItems, ...weakItems, ...extraItems];
         console.log(`[DEBUG] RetrievalPractice Page - studentId: ${sId}`);
         console.log(`[DEBUG] RetrievalPractice - Firebase flashcards count: ${cloudPairs.length}`);
-        
+
         encodedItems.forEach((p, idx) => {
-           console.log(`[DEBUG]   Item ${idx}: ${p.item.focusExpression}, retrievalCount: ${p.record.retrievalCount}, historyLength: ${(p.record as any).retrievalHistory?.length || 0}`);
+          console.log(`[DEBUG]   Item ${idx}: ${p.item.focusExpression}, retrievalCount: ${p.record.retrievalCount}, historyLength: ${(p.record as any).retrievalHistory?.length || 0}`);
         });
 
         console.log(`[DEBUG] RetrievalPractice final queue count: ${finalQueue.length}`);
@@ -163,14 +173,14 @@ export default function TonePractice() {
     if (!current) return;
 
     const urls = current.record?.audioUrls;
-    const audioUrl = urls?.studentWord || 
-                     urls?.word || 
-                     urls?.studentChunk || 
-                     urls?.chunk || 
-                     urls?.focusExpression || 
-                     urls?.aiWord || 
-                     urls?.aiChunk;
-    
+    const audioUrl = urls?.studentWord ||
+      urls?.word ||
+      urls?.studentChunk ||
+      urls?.chunk ||
+      urls?.focusExpression ||
+      urls?.aiWord ||
+      urls?.aiChunk;
+
     console.log("🌐 [DEBUG] Auto-load check, resolved audioUrl:", audioUrl);
     if (audioUrl) {
       fetchTargetCurveFromUrl(audioUrl);
@@ -201,11 +211,10 @@ export default function TonePractice() {
     setIsEvaluating(true);
     setValidationError(null);
 
-    if (answerMode === 'voice' && !transcript.trim()) {
-      setValidationError('Please record your answer first.');
-      setIsEvaluating(false);
-      return;
-    }
+    // 💡 Tone 模式下略過 AI 評分，直接設為成功
+    setFeedback({ type: 'success', msg: 'Tone practice recorded' });
+    setIsEvaluating(false);
+    return;
 
     const currentPair = practiceQueue[currentIndex];
     const item = currentPair.item;
@@ -274,11 +283,44 @@ export default function TonePractice() {
       if (recognition) {
         recognition.stop();
       }
+      
+      // 🛑 停止語調串流 (Demo 邏輯)
+      if (wsRef.current) wsRef.current.close();
+      if (processorRef.current) processorRef.current.disconnect();
+      if (audioContextRef.current) audioContextRef.current.close();
+      
       setIsRecording(false);
     } else {
       setTranscript('');
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        
+        // 🔥 建立 WebSocket 與 AudioContext (直接複製 Demo)
+        const ws = new WebSocket("ws://localhost:8000/ws/pitch");
+        ws.binaryType = "arraybuffer";
+        wsRef.current = ws;
+
+        ws.onmessage = (event) => {
+          const pitch = JSON.parse(event.data);
+          setUserCurve(pitch);
+        };
+
+        const audioContext = new AudioContext();
+        audioContextRef.current = audioContext;
+        const source = audioContext.createMediaStreamSource(stream);
+        const processor = audioContext.createScriptProcessor(1024, 1, 1);
+        processorRef.current = processor;
+
+        processor.onaudioprocess = (e) => {
+          const input = e.inputBuffer.getChannelData(0);
+          if (ws.readyState === 1) {
+            ws.send(input.buffer);
+          }
+        };
+
+        source.connect(processor);
+        processor.connect(audioContext.destination);
+
         const { recorder, mimeType } = await startSafeMediaRecorder(stream);
         const chunks: Blob[] = [];
         recorder.ondataavailable = (e) => chunks.push(e.data);
@@ -294,7 +336,7 @@ export default function TonePractice() {
           const recognizer = new SpeechRecognition();
           // Tone Practice always expects Chinese speech
           recognizer.lang = 'zh-TW';
-          
+
           recognizer.continuous = true;
           recognizer.interimResults = true;
 
@@ -307,9 +349,10 @@ export default function TonePractice() {
             }
             if (finalTranscript) setTranscript(finalTranscript);
           };
-          
-          recognizer.start();
-          setRecognition(recognizer);
+
+          // 💡 Minimal bypass: 暫時不啟動語音辨識
+          // recognizer.start();
+          // setRecognition(recognizer);
         }
 
         setIsRecording(true);
@@ -320,6 +363,101 @@ export default function TonePractice() {
         setValidationError(`Recording failed: ${err.message || 'Microphone access denied'}`);
       }
     }
+  };
+
+  const startToneRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+      const recorder = new MediaRecorder(stream);
+      const chunks: Blob[] = [];
+      
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data);
+      };
+
+      recorder.onstop = () => {
+        const blob = new Blob(chunks, { type: 'audio/webm' }); 
+        const url = URL.createObjectURL(blob);
+        setRecordedBlobUrl(url); 
+      };
+
+      recorder.start();
+      toneMediaRecorderRef.current = recorder;
+
+      // 🔥 建立 WebSocket
+      const ws = new WebSocket("ws://localhost:8000/ws/pitch");
+      ws.binaryType = "arraybuffer";
+      toneWsRef.current = ws;
+
+      ws.onmessage = (event) => {
+        const pitch = JSON.parse(event.data);
+        // 🔥 即時更新藍線 (直接複製 Demo)
+        setUserCurve(prev => [...prev, ...pitch].slice(-140));
+      };
+
+      // 🔥 關鍵：強制指定 16000 採樣率
+      const audioContext = new AudioContext({ sampleRate: 16000 });
+      toneCtxRef.current = audioContext;
+      const source = audioContext.createMediaStreamSource(stream);
+
+      const processor = audioContext.createScriptProcessor(1024, 1, 1);
+      toneProcessorRef.current = processor;
+
+      processor.onaudioprocess = (e) => {
+        const input = e.inputBuffer.getChannelData(0);
+        if (ws.readyState === 1) {
+          ws.send(input.buffer); // 🔥 直接送 float32
+        }
+      };
+
+      source.connect(processor);
+      processor.connect(audioContext.destination);
+
+      setUserCurve([]); // 🔥 清空舊曲線
+      setIsRecording(true);
+      setRecordedBlobUrl(null);
+      setValidationError(null);
+
+    } catch (err: any) {
+      console.error("Failed to start tone recording:", err);
+      setValidationError(`Recording failed: ${err.message || 'Microphone access denied'}`);
+    }
+  };
+
+  const stopToneRecording = () => {
+    if (!isRecording) return;
+
+    if (toneMediaRecorderRef.current && toneMediaRecorderRef.current.state !== "inactive") {
+      toneMediaRecorderRef.current.stop();
+    }
+
+    if (toneProcessorRef.current) {
+      toneProcessorRef.current.disconnect();
+    }
+
+    setTimeout(() => {
+      const currentWs = toneWsRef.current; 
+      if (currentWs && currentWs.readyState === WebSocket.OPEN) {
+        currentWs.close(1000, "Normal Closure"); 
+      }
+    }, 50);
+
+    try {
+      if (toneCtxRef.current && toneCtxRef.current.state !== 'closed') {
+        toneCtxRef.current.close();
+      }
+      
+      if (toneMediaRecorderRef.current && toneMediaRecorderRef.current.stream) {
+        toneMediaRecorderRef.current.stream.getTracks().forEach(track => {
+          track.stop(); 
+        });
+      }
+    } catch (e) {
+      console.error("Cleanup error:", e);
+    }
+
+    setIsRecording(false);
   };
 
   const getTtsText = (item: LearningItem, record: StudentLearningRecord, type: 'focusExpression' | 'chunk'): string => {
@@ -349,8 +487,8 @@ export default function TonePractice() {
     if (!data || data.length < 2) return null;
 
     const SVG_WIDTH = 500;
-    const MIDDLE_Y = 75;
-    
+    const MIDDLE_Y = 120; // Center for 240px height
+
     const validPoints = data.filter(v => v > 0);
     if (validPoints.length === 0) return null;
     const avg = validPoints.reduce((a, b) => a + b, 0) / validPoints.length;
@@ -413,10 +551,10 @@ export default function TonePractice() {
     const lang = isChineseTTS ? 'zh-TW' : 'en-US';
 
     if (source === 'student') {
-      const studentUrl = type === 'focusExpression' 
-        ? (record?.audioUrls?.studentWord || record?.audioUrls?.word) 
+      const studentUrl = type === 'focusExpression'
+        ? (record?.audioUrls?.studentWord || record?.audioUrls?.word)
         : (record?.audioUrls?.studentChunk || record?.audioUrls?.chunk);
-      
+
       if (studentUrl) {
         playUnifiedAudio('', studentUrl, lang, voicePref);
       } else {
@@ -427,7 +565,7 @@ export default function TonePractice() {
 
     // AI Source - Strictly TTS or AI stored URL
     const aiUrl = type === 'focusExpression' ? record?.audioUrls?.aiWord : record?.audioUrls?.aiChunk;
-    
+
     if (aiUrl) {
       playUnifiedAudio('', aiUrl, lang, voicePref);
       return;
@@ -438,7 +576,7 @@ export default function TonePractice() {
     if (record && (type === 'focusExpression' || type === 'chunk')) {
       ttsText = getTtsText(currentItem, record, type);
     }
-    
+
     if (ttsText) {
       playUnifiedAudio(ttsText, undefined, lang, voicePref);
     }
@@ -570,7 +708,7 @@ export default function TonePractice() {
                       boxShadow: isRecording ? '0 0 15px rgba(239, 68, 68, 0.5)' : 'none',
                       transition: 'all 0.2s ease'
                     }}
-                    onClick={handleToggleRecording}
+                    onClick={isRecording ? stopToneRecording : startToneRecording}
                   >
                     {isRecording ? '⏹' : '🎤'}
                   </button>
@@ -580,12 +718,7 @@ export default function TonePractice() {
                 </>
               ) : (
                 <div style={{ padding: '1rem', background: '#f0fdf4', borderRadius: '12px', border: '1px solid #bbf7d0', display: 'inline-block' }}>
-                  <p style={{ margin: '0 0 0.5rem', color: '#166534', fontWeight: 'bold', fontSize: '0.9rem' }}>✅ Answer Recorded</p>
-                  {transcript && (
-                    <p style={{ margin: '0 0 1rem', fontSize: '1rem', color: 'var(--text-main)', fontStyle: 'italic' }}>
-                      "You said: {isChineseLearner && transcript === ((current.item as ChunkItem).targetText || (current.record as any).targetText) ? `${(current.item as ChunkItem).focusExpression} / ${transcript}` : transcript}"
-                    </p>
-                  )}
+                  {/* 💡 略過文字顯示，只保留按鈕 */}
                   <div style={{ display: 'flex', gap: '0.5rem' }}>
                     <button className="btn btn-outline" style={{ background: '#fff', padding: '0.3rem 0.6rem', fontSize: '0.8rem' }} onClick={playRecording}>▶️ Play</button>
                     <button className="btn btn-outline" style={{ background: '#fff', padding: '0.3rem 0.6rem', fontSize: '0.8rem' }} onClick={() => { setRecordedBlobUrl(null); setTranscript(''); }}>🔄 Re-record</button>
@@ -606,7 +739,8 @@ export default function TonePractice() {
               className="btn btn-primary"
               disabled={isEvaluating}
               onClick={() => {
-                if (answerMode === 'voice' && !transcript.trim()) {
+                // 💡 Tone 模式下改為檢查是否有錄音或曲線數據
+                if (answerMode === 'voice' && !recordedBlobUrl && userCurve.length === 0) {
                   setValidationError('Please record your answer first.');
                   return;
                 }
@@ -623,35 +757,14 @@ export default function TonePractice() {
 
     return (
       <>
-        <div>
-          <h3 style={{ color: feedback.type === 'success' ? 'var(--success)' : 'var(--danger)', marginBottom: '1.5rem' }}>{feedback.msg}</h3>
+        <div style={{ padding: '1.5rem', background: '#f0fdf4', borderRadius: '12px', border: '1px solid #bbf7d0', textAlign: 'center', margin: '1rem 0' }}>
+          <h3 style={{ color: '#166534', marginBottom: '1rem' }}>Tone practice recorded</h3>
           
-          <div style={{ margin: '1rem 0', background: '#f8fafc', padding: '1.5rem', borderRadius: '12px', border: '1px solid var(--border)', textAlign: 'left' }}>
-            <p style={{ margin: '0 0 0.5rem', fontWeight: 'bold', color: 'var(--text-muted)', fontSize: '0.8rem', textTransform: 'uppercase' }}>Your Answer:</p>
-            <div style={{ marginBottom: '1.5rem' }}>
-              <div style={{ fontSize: '1.1rem', marginBottom: '0.5rem' }}>
-                {answerMode === 'voice' && transcript ? (
-                  isChineseLearner && transcript === ((current.item as ChunkItem).targetText || (current.record as any).targetText) 
-                    ? `${(current.item as ChunkItem).focusExpression} / ${transcript}` 
-                    : transcript
-                ) : typedAnswer}
-              </div>
-              {recordedBlobUrl && (
-                <button className="btn btn-outline" style={{ background: '#fff', padding: '0.3rem 0.6rem', fontSize: '0.8rem' }} onClick={playRecording}>
-                  🔊 Play Your Answer
-                </button>
-              )}
-            </div>
-
-            <p style={{ margin: '0 0 0.5rem', fontWeight: 'bold', color: 'var(--text-muted)', fontSize: '0.8rem', textTransform: 'uppercase' }}>Expected Answer:</p>
-            <div style={{ marginBottom: '1rem' }}>{testContent.displayExpected}</div>
-            
-            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-start', marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border)' }}>
-              <button className="btn btn-outline" style={{ background: '#fff', fontSize: '0.85rem' }} onClick={() => speak(testContent.rawExpected, current.record, 'focusExpression', 'ai')}>🤖 AI Voice</button>
-              {(current.record.audioUrls?.studentWord || current.record.audioUrls?.focusExpression || current.record.audioUrls?.word) && (
-                <button className="btn btn-outline" style={{ background: '#fff', fontSize: '0.85rem' }} onClick={() => speak(testContent.rawExpected, current.record, 'focusExpression', 'student')}>🎤 My Voice</button>
-              )}
-            </div>
+          <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center' }}>
+            {recordedBlobUrl && (
+              <button className="btn btn-outline" style={{ background: '#fff' }} onClick={playRecording}>▶️ Play</button>
+            )}
+            <button className="btn btn-outline" style={{ background: '#fff' }} onClick={() => { setFeedback(null); setRecordedBlobUrl(null); setTranscript(''); setUserCurve([]); }}>🔄 Re-record</button>
           </div>
         </div>
 
@@ -690,94 +803,95 @@ export default function TonePractice() {
       </div>
 
 
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ marginBottom: '2rem', background: '#f8fafc', padding: '1.25rem', borderRadius: '16px', border: '1px solid var(--border)', display: 'flex', flexWrap: 'wrap', gap: '1.5rem', justifyContent: 'center', alignItems: 'flex-end' }}>
-            <div style={{ flex: '1', minWidth: '150px' }}>
-              <p style={{ margin: '0 0 0.5rem', fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Prompt Mode</p>
-              <div style={{ display: 'flex', background: '#e2e8f0', padding: '0.2rem', borderRadius: '8px' }}>
-                {[
-                  { id: 'meaning', label: 'Meaning' },
-                  { id: 'pronunciation', label: 'Pronunciation' }
-                ].map(d => (
-                  <button
-                    key={d.id}
-                    className="btn"
-                    style={{
-                      flex: '1',
-                      padding: '0.4rem 0.8rem',
-                      fontSize: '0.8rem',
-                      border: 'none',
-                      background: promptMode === d.id ? '#fff' : 'transparent',
-                      color: promptMode === d.id ? 'var(--primary)' : 'var(--text-muted)',
-                      boxShadow: promptMode === d.id ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
-                      fontWeight: promptMode === d.id ? 'bold' : 'normal'
-                    }}
-                    onClick={() => setPromptMode(d.id as any)}
-                  >
-                    {d.label}
-                  </button>
-                ))}
-              </div>
+      <div style={{ textAlign: 'center' }}>
+        <div style={{ marginBottom: '2rem', background: '#f8fafc', padding: '1.25rem', borderRadius: '16px', border: '1px solid var(--border)', display: 'flex', flexWrap: 'wrap', gap: '1.5rem', justifyContent: 'center', alignItems: 'flex-end' }}>
+          <div style={{ flex: '1', minWidth: '150px' }}>
+            <p style={{ margin: '0 0 0.5rem', fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Prompt Mode</p>
+            <div style={{ display: 'flex', background: '#e2e8f0', padding: '0.2rem', borderRadius: '8px' }}>
+              {[
+                { id: 'meaning', label: 'Meaning' },
+                { id: 'pronunciation', label: 'Pronunciation' }
+              ].map(d => (
+                <button
+                  key={d.id}
+                  className="btn"
+                  style={{
+                    flex: '1',
+                    padding: '0.4rem 0.8rem',
+                    fontSize: '0.8rem',
+                    border: 'none',
+                    background: promptMode === d.id ? '#fff' : 'transparent',
+                    color: promptMode === d.id ? 'var(--primary)' : 'var(--text-muted)',
+                    boxShadow: promptMode === d.id ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                    fontWeight: promptMode === d.id ? 'bold' : 'normal'
+                  }}
+                  onClick={() => setPromptMode(d.id as any)}
+                >
+                  {d.label}
+                </button>
+              ))}
             </div>
-
-
           </div>
 
-          {/* AI Voice Preference Selector */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.75rem', marginBottom: '2rem', padding: '0.5rem 1rem', background: '#f1f5f9', borderRadius: '20px' }}>
-            <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--text-muted)' }}>AI Voice:</span>
-            {(['system', 'female', 'male'] as const).map(p => (
-              <button
-                key={p}
-                onClick={() => setVoicePref(p)}
-                style={{
-                  padding: '0.2rem 0.6rem',
-                  fontSize: '0.7rem',
-                  border: 'none',
-                  borderRadius: '12px',
-                  cursor: 'pointer',
-                  background: voicePref === p ? 'var(--primary)' : 'transparent',
-                  color: voicePref === p ? '#fff' : 'var(--text-muted)',
-                  fontWeight: voicePref === p ? 'bold' : 'normal',
-                  textTransform: 'capitalize'
-                }}
-              >
-                {p}
-              </button>
-            ))}
-          </div>
 
-          <div className="card" style={{ textAlign: 'center', minHeight: '400px', display: 'flex', flexDirection: 'column', justifyContent: 'center', position: 'relative' }}>
-            <p style={{ color: 'var(--text-muted)', fontWeight: 'bold', fontSize: '0.75rem', letterSpacing: '0.1em', margin: 0 }}>TASK PROMPT</p>
-            <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
-              {testContent.instruction}
-            </p>
-            <div style={{ fontSize: '2rem', margin: '0 0 2rem', fontWeight: 'bold', color: 'var(--primary)' }}>
-              {testContent.prompt}
-            </div>
-
-            {/* 實作的語調分析畫布 */}
-            <div style={{ 
-              margin: '0 auto 2rem', 
-              width: '100%', 
-              maxWidth: '600px', 
-              height: '150px', 
-              background: '#f8fafc', 
-              borderRadius: '12px', 
-              border: '1px solid var(--border)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              position: 'relative'
-            }}>
-              <svg width="500" height="150" style={{ overflow: 'visible' }}>
-                {renderPitchLine(targetCurve, "#ff4d4d", 4, 0.8)}
-              </svg>
-            </div>
-
-            {renderTestInput()}
-          </div>
         </div>
+
+        {/* AI Voice Preference Selector */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.75rem', marginBottom: '2rem', padding: '0.5rem 1rem', background: '#f1f5f9', borderRadius: '20px' }}>
+          <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--text-muted)' }}>AI Voice:</span>
+          {(['system', 'female', 'male'] as const).map(p => (
+            <button
+              key={p}
+              onClick={() => setVoicePref(p)}
+              style={{
+                padding: '0.2rem 0.6rem',
+                fontSize: '0.7rem',
+                border: 'none',
+                borderRadius: '12px',
+                cursor: 'pointer',
+                background: voicePref === p ? 'var(--primary)' : 'transparent',
+                color: voicePref === p ? '#fff' : 'var(--text-muted)',
+                fontWeight: voicePref === p ? 'bold' : 'normal',
+                textTransform: 'capitalize'
+              }}
+            >
+              {p}
+            </button>
+          ))}
+        </div>
+
+        <div className="card" style={{ textAlign: 'center', minHeight: '400px', display: 'flex', flexDirection: 'column', justifyContent: 'center', position: 'relative' }}>
+          <p style={{ color: 'var(--text-muted)', fontWeight: 'bold', fontSize: '0.75rem', letterSpacing: '0.1em', margin: 0 }}>TASK PROMPT</p>
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
+            {testContent.instruction}
+          </p>
+          <div style={{ fontSize: '2rem', margin: '0 0 2rem', fontWeight: 'bold', color: 'var(--primary)' }}>
+            {testContent.prompt}
+          </div>
+
+          {/* 實作的語調分析畫布 */}
+          <div style={{
+            margin: '0 auto 2rem',
+            width: '100%',
+            maxWidth: '600px',
+            height: '240px', // 💡 增加高度
+            background: '#f8fafc',
+            borderRadius: '12px',
+            border: '1px solid var(--border)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            position: 'relative'
+          }}>
+            <svg width="500" height="240" style={{ overflow: 'visible' }}> {/* 💡 增加高度 */}
+              {renderPitchLine(targetCurve, "#ff4d4d", 4, 0.8)}
+              {renderPitchLine(userCurve, "#00d2ff", 4, 1)}
+            </svg>
+          </div>
+
+          {renderTestInput()}
+        </div>
+      </div>
 
     </div>
   );
