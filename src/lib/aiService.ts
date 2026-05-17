@@ -194,21 +194,31 @@ export async function evaluateRecording(params: {
     console.log(`[evaluateRecording] AI evaluation result:`, result);
 
     if (params.taskType === 'explain') {
-      // The new prompt doesn't necessarily return a single 'score', 
-      // so we might use one of the sub-scores or average them if needed,
-      // but usually the AI is instructed to provide a 'score'.
-      // If the user's provided JSON list doesn't have 'score', let's check if it's there.
+      // Calculate average if score is missing
+      const completionScore = result.completionScore || 0;
+      const accuracyScore = result.accuracyScore || 0;
+      const detailScore = result.detailScore || 0;
+      const clarityScore = result.clarityScore || 0;
+      
+      const calculatedScore = Math.round((completionScore + accuracyScore + detailScore + clarityScore) / 4);
+      
+      let finalScore = 0;
+      if (result.score !== undefined) finalScore = result.score;
+      else if (result.overallScore !== undefined) finalScore = result.overallScore;
+      else if (result.totalScore !== undefined) finalScore = result.totalScore;
+      else finalScore = calculatedScore;
+
       return {
         type: 'comprehension',
-        score: result.score || 0,
+        score: finalScore,
         transcriptionText: transcriptionText,
-        completionScore: result.completionScore,
+        completionScore: completionScore,
         completionFeedback: result.completionFeedback,
-        accuracyScore: result.accuracyScore,
+        accuracyScore: accuracyScore,
         accuracyFeedback: result.accuracyFeedback,
-        detailScore: result.detailScore,
+        detailScore: detailScore,
         detailFeedback: result.detailFeedback,
-        clarityScore: result.clarityScore,
+        clarityScore: clarityScore,
         clarityFeedback: result.clarityFeedback,
         strengths: result.strengths,
         needsWork: result.needsWork,

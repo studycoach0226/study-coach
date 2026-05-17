@@ -11,6 +11,8 @@ import { playUnifiedAudio } from '../lib/audioUtils';
 import { evaluateTypedAnswer } from '../lib/aiService';
 import { startSafeMediaRecorder } from '../lib/audioRecorderUtils';
 
+const SPEECH_API_BASE = (import.meta as any).env.VITE_SPEECH_API_BASE || "http://localhost:8000";
+
 export default function TonePractice() {
   const navigate = useNavigate();
   const { studentId: routeStudentId } = useParams<{ studentId: string }>();
@@ -32,6 +34,7 @@ export default function TonePractice() {
   const [transcript, setTranscript] = useState('');
   const [recognition, setRecognition] = useState<any>(null);
   const [voicePref, setVoicePref] = useState<'female' | 'male' | 'system'>('system');
+  const [targetCurve, setTargetCurve] = useState<number[]>([]);
 
   useEffect(() => {
     const sId = routeStudentId || db.getCurrentUserId();
@@ -154,6 +157,27 @@ export default function TonePractice() {
 
     loadData();
   }, [routeStudentId]);
+
+  useEffect(() => {
+    const current = practiceQueue[currentIndex];
+    if (!current) return;
+
+    const urls = current.record?.audioUrls;
+    const audioUrl = urls?.studentWord || 
+                     urls?.word || 
+                     urls?.studentChunk || 
+                     urls?.chunk || 
+                     urls?.focusExpression || 
+                     urls?.aiWord || 
+                     urls?.aiChunk;
+    
+    console.log("🌐 [DEBUG] Auto-load check, resolved audioUrl:", audioUrl);
+    if (audioUrl) {
+      fetchTargetCurveFromUrl(audioUrl);
+    } else {
+      setTargetCurve([]);
+    }
+  }, [currentIndex, practiceQueue]);
 
   const handleNext = () => {
     if (currentIndex < practiceQueue.length - 1) {
@@ -318,6 +342,61 @@ export default function TonePractice() {
       } else {
         return chunkItem?.chunk || '';
       }
+    }
+  };
+
+  const renderPitchLine = (data: number[], color: string, strokeWidth: number, opacity = 1) => {
+    if (!data || data.length < 2) return null;
+
+    const SVG_WIDTH = 500;
+    const MIDDLE_Y = 75;
+    
+    const validPoints = data.filter(v => v > 0);
+    if (validPoints.length === 0) return null;
+    const avg = validPoints.reduce((a, b) => a + b, 0) / validPoints.length;
+
+    const stepX = SVG_WIDTH / (data.length - 1);
+
+    return data.map((v, i) => {
+      if (i === 0 || v <= 0 || data[i - 1] <= 0) return null;
+
+      const y1 = MIDDLE_Y - (data[i - 1] - avg) * 6;
+      const y2 = MIDDLE_Y - (v - avg) * 6;
+
+      return (
+        <line
+          key={`${color}-${i}`}
+          x1={(i - 1) * stepX}
+          y1={y1}
+          x2={i * stepX}
+          y2={y2}
+          stroke={color}
+          strokeWidth={strokeWidth}
+          strokeLinecap="round"
+          style={{ opacity, transition: 'all 0.05s linear' }}
+        />
+      );
+    });
+  };
+
+  const fetchTargetCurveFromUrl = async (audioUrl: string) => {
+    console.log("🌐 [DEBUG] Fetching baseline curve for:", audioUrl);
+    try {
+      const res = await fetch(`${SPEECH_API_BASE}/get_pitch_from_url`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          audio_url: audioUrl
+        })
+      });
+
+      const curve = await res.json();
+      setTargetCurve(curve);
+      console.log("✅ [DEBUG] Target curve loaded:", curve.length);
+    } catch (err) {
+      console.error("❌ [DEBUG] Failed to fetch target curve:", err);
     }
   };
 
@@ -677,7 +756,7 @@ export default function TonePractice() {
               {testContent.prompt}
             </div>
 
-            {/* Reserved Visualization Container for Future Tone Analysis */}
+            {/* 實作的語調分析畫布 */}
             <div style={{ 
               margin: '0 auto 2rem', 
               width: '100%', 
@@ -685,14 +764,15 @@ export default function TonePractice() {
               height: '150px', 
               background: '#f8fafc', 
               borderRadius: '12px', 
-              border: '1px dashed var(--border)',
+              border: '1px solid var(--border)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              color: 'var(--text-muted)',
-              fontSize: '0.9rem'
+              position: 'relative'
             }}>
-              Visualization Area (Reserved for Future Tone Curves)
+              <svg width="500" height="150" style={{ overflow: 'visible' }}>
+                {renderPitchLine(targetCurve, "#ff4d4d", 4, 0.8)}
+              </svg>
             </div>
 
             {renderTestInput()}
