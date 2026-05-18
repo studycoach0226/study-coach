@@ -163,6 +163,53 @@ def process_f0_v2(y, sr, target_len=300):
     
     return final_curve.tolist()
 
+def process_f0_v3(y, sr, target_len=300, conf_thresh=0.55, kernel_size=3):
+    if y.dtype != np.float32:
+        y = y.astype(np.float32)
+
+    result = detector.detect_from_array(y, sr)
+    pitch = result.pitch_hz
+    conf = result.confidence
+
+    # 濾除低信心與異常頻率
+    pitch[conf < conf_thresh] = 0
+    pitch[pitch < 50] = 0
+
+    # Find boundaries (trim silence)
+    nonzero_idx = np.where(pitch > 0)[0]
+    if len(nonzero_idx) < 10:
+        return [0] * target_len
+        
+    start_idx = nonzero_idx[0]
+    end_idx = nonzero_idx[-1]
+    
+    trimmed_pitch = pitch[start_idx:end_idx+1]
+    
+    # Interpolate internal silences BEFORE smoothing
+    valid_mask = trimmed_pitch > 0
+    valid_idx = np.where(valid_mask)[0]
+    valid_vals = trimmed_pitch[valid_mask]
+    
+    if len(valid_vals) < 5:
+        return [0] * target_len
+        
+    full_idx = np.arange(len(trimmed_pitch))
+    interpolated_pitch = np.interp(full_idx, valid_idx, valid_vals)
+    
+    # Apply median filter after interpolation
+    smoothed_pitch = scipy.signal.medfilt(interpolated_pitch, kernel_size=kernel_size)
+    
+    # Scale to 0-100 (matching blue curve scale concept)
+    p_log = np.log2(smoothed_pitch)
+    p_min, p_max = np.log2(65), np.log2(400)
+    norm_pitch = (p_log - p_min) / (p_max - p_min) * 100
+    
+    # Resample to target_len
+    xp = np.linspace(0, len(norm_pitch) - 1, target_len)
+    final_curve = np.interp(xp, np.arange(len(norm_pitch)), norm_pitch)
+    
+    return final_curve.tolist()
+
 # =========================
 # 🔥 評分系統
 # =========================
@@ -322,6 +369,37 @@ async def get_audio_curve_v2(audio_bytes: bytes, filename: str):
 
     except Exception as e:
         print("Audio curve v2 error:", e)
+        if os.path.exists(temp_input):
+            os.remove(temp_input)
+        if os.path.exists(temp_wav):
+            os.remove(temp_wav)
+        return [0] * 300
+
+async def get_audio_curve_v3(audio_bytes: bytes, filename: str):
+    temp_input = f"temp_input_v3_{os.getpid()}_{filename}"
+    temp_wav = f"temp_output_v3_{os.getpid()}.wav"
+
+    try:
+        with open(temp_input, "wb") as f:
+            f.write(audio_bytes)
+
+        audio = AudioSegment.from_file(temp_input)
+        audio.export(temp_wav, format="wav")
+
+        y, sr = librosa.load(temp_wav, sr=16000)
+
+        curve = process_f0_v3(y, sr)
+
+        if os.path.exists(temp_input):
+            os.remove(temp_input)
+
+        if os.path.exists(temp_wav):
+            os.remove(temp_wav)
+
+        return curve
+
+    except Exception as e:
+        print("Audio curve v3 error:", e)
         if os.path.exists(temp_input):
             os.remove(temp_input)
         if os.path.exists(temp_wav):
@@ -665,6 +743,24 @@ async def get_pitch_from_url_v2(req: UrlRequest):
         return curve
     except Exception as e:
         print("pitch_from_url_v2 error:", e)
+        return [0] * 300
+
+@app.post("/get_pitch_from_url_v3")
+async def get_pitch_from_url_v3(req: UrlRequest):
+    try:
+        response = requests.get(req.audio_url)
+        if response.status_code != 200:
+            raise HTTPException(status_code=400, detail=f"Failed to download audio from URL. Status: {response.status_code}")
+        
+        audio_bytes = response.content
+        filename = req.audio_url.split('/')[-1].split('?')[0]
+        if not filename:
+            filename = "baseline.mp4"
+            
+        curve = await get_audio_curve_v3(audio_bytes, filename)
+        return curve
+    except Exception as e:
+        print("pitch_from_url_v3 error:", e)
         return [0] * 300
 
 # =========================
