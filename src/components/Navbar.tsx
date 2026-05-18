@@ -1,10 +1,22 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { db } from '../lib/db';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+
+const DEFAULT_NAV_SETTINGS = [
+  { id: 'dashboard', name: 'Dashboard', path: '', location: 'bar' },
+  { id: 'flashcards', name: 'Flashcards', path: '/flashcards', location: 'bar' },
+  { id: 'practice', name: 'Retrieval', path: '/practice', location: 'bar' },
+  { id: 'reading', name: 'Reading', path: '/reading', location: 'bar' },
+  { id: 'writing', name: 'Writing', path: '/writing', location: 'bar' },
+  { id: 'tone', name: 'Tone', path: '/tone-practice', location: 'more' },
+  { id: 'exercises', name: 'Exercises', path: '/exercises', location: 'more' },
+  { id: 'report', name: 'Report', path: '/report', location: 'more' }
+];
 
 export default function Navbar() {
   const location = useLocation();
   const navigate = useNavigate();
+  const [moreOpen, setMoreOpen] = useState(false);
 
   // Directly read from DB during render for "true" reactivity when location changes
   const user = db.getLoggedUser();
@@ -15,6 +27,13 @@ export default function Navbar() {
     ? location.pathname.split('/')[2] 
     : null;
   const effectiveStudentId = db.getCurrentUserId() || studentIdFromPath;
+
+  // Read nav settings from localStorage
+  const savedSettingsStr = effectiveStudentId ? localStorage.getItem(`navbar_settings_${effectiveStudentId}`) : null;
+  const navSettings = savedSettingsStr ? JSON.parse(savedSettingsStr) : DEFAULT_NAV_SETTINGS;
+
+  const barItems = navSettings.filter((item: any) => item.location === 'bar');
+  const moreItems = navSettings.filter((item: any) => item.location === 'more');
 
   // Redirect if visiting a path that doesn't match the active role
   useEffect(() => {
@@ -109,19 +128,67 @@ export default function Navbar() {
           </>
         ) : (
           <>
-            <NavLink to={`/student/${effectiveStudentId}`} current={location.pathname}>Dashboard</NavLink>
-            <NavLink to={`/student/${effectiveStudentId}/flashcards`} current={location.pathname}>Flashcards</NavLink>
-            <NavLink to={`/student/${effectiveStudentId}/practice`} current={location.pathname}>Retrieval</NavLink>
-            <NavLink to={`/student/${effectiveStudentId}/tone-practice`} current={location.pathname}>Tone</NavLink>
-            <NavLink to={`/student/${effectiveStudentId}/reading`} current={location.pathname}>Reading</NavLink>
-            <NavLink to={`/student/${effectiveStudentId}/exercises`} current={location.pathname}>Exercises</NavLink>
-            <NavLink to={`/student/${effectiveStudentId}/report`} current={location.pathname}>Report</NavLink>
-            {/* <NavLink to={`/student/${effectiveStudentId}/listen-speak`} current={location.pathname}>Listen & Speak</NavLink> */}
+            {barItems.map((item: any) => (
+              <NavLink key={item.id} to={`/student/${effectiveStudentId}${item.path}`} current={location.pathname}>
+                {item.name}
+              </NavLink>
+            ))}
+            
+            {/* More Dropdown */}
+            <div style={{ position: 'relative' }}>
+              <button 
+                onClick={() => setMoreOpen(!moreOpen)}
+                style={{
+                  padding: '0.5rem 0.25rem', background: 'none', border: 'none', fontSize: '0.95rem',
+                  color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem'
+                }}
+              >
+                More ▾
+              </button>
+              {moreOpen && (
+                <div style={{
+                  position: 'absolute', top: '100%', right: 0, background: '#fff', border: '1px solid var(--border)',
+                  borderRadius: '4px', boxShadow: '0 2px 8px rgba(0,0,0,0.1)', minWidth: '150px', zIndex: 101,
+                  display: 'flex', flexDirection: 'column', padding: '0.5rem 0'
+                }}>
+                  {moreItems.map((item: any) => (
+                    <DropdownLink key={item.id} to={`/student/${effectiveStudentId}${item.path}`} onClick={() => setMoreOpen(false)}>
+                      {item.name}
+                    </DropdownLink>
+                  ))}
+                  <DropdownLink to={`/student/${effectiveStudentId}/bar-settings`} onClick={() => setMoreOpen(false)}>
+                    ⚙️ Bar Settings
+                  </DropdownLink>
+                </div>
+              )}
+            </div>
           </>
         )}
       </nav>
 
     </div>
+  );
+}
+
+function DropdownLink({ to, children, onClick }: { to: string; children: React.ReactNode; onClick: () => void }) {
+  const [hover, setHover] = useState(false);
+  return (
+    <Link
+      to={to}
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        padding: '0.5rem 1rem',
+        textDecoration: 'none',
+        fontSize: '0.95rem',
+        color: 'var(--text-muted)',
+        background: hover ? '#f8fafc' : 'transparent',
+        transition: 'background 0.2s'
+      }}
+    >
+      {children}
+    </Link>
   );
 }
 
