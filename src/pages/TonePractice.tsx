@@ -311,7 +311,7 @@ export default function TonePractice() {
       toneMediaRecorderRef.current = recorder;
 
       // 🔥 建立 WebSocket
-      const ws = new WebSocket("ws://localhost:8000/ws/pitch");
+      const ws = new WebSocket(SPEECH_API_BASE.replace('http', 'ws') + "/ws/pitch");
       ws.binaryType = "arraybuffer";
       toneWsRef.current = ws;
 

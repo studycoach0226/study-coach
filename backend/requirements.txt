@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+supabase
+edge-tts
+librosa
+requests
+numpy
+scipy
+swift-f0
+fastdtw
+pydub
+python-dotenv
+python-multipart
