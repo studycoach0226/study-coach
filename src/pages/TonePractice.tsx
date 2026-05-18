@@ -33,6 +33,7 @@ export default function TonePractice() {
   const [targetCurve, setTargetCurve] = useState<number[]>([]);
   const [userCurve, setUserCurve] = useState<number[]>([]);
   const [processedUserCurve, setProcessedUserCurve] = useState<number[]>([]);
+  const [pipelineVersion, setPipelineVersion] = useState<'v1' | 'v2' | 'v3' | 'v4'>('v3');
 
   const toneWsRef = useRef<WebSocket | null>(null);
   const toneCtxRef = useRef<AudioContext | null>(null);
@@ -455,12 +456,17 @@ export default function TonePractice() {
   };
 
   const fetchProcessedUserCurve = async (blob: Blob) => {
-    console.log("🌐 [DEBUG] Uploading to /get_pitch_v3 starts...");
+    let endpoint = '/get_pitch_v3';
+    if (pipelineVersion === 'v1') endpoint = '/get_pitch';
+    if (pipelineVersion === 'v2') endpoint = '/get_pitch_v2';
+    if (pipelineVersion === 'v4') endpoint = '/get_pitch_v4';
+
+    console.log(`🌐 [DEBUG] Uploading to ${endpoint} starts...`);
     const formData = new FormData();
     formData.append('file', blob, 'recording.webm');
     
     try {
-      const res = await fetch(`${SPEECH_API_BASE}/get_pitch_v3`, {
+      const res = await fetch(`${SPEECH_API_BASE}${endpoint}`, {
         method: "POST",
         body: formData
       });
@@ -631,7 +637,7 @@ export default function TonePractice() {
                   {/* 💡 略過文字顯示，只保留按鈕 */}
                   <div style={{ display: 'flex', gap: '0.5rem' }}>
                     <button className="btn btn-outline" style={{ background: '#fff', padding: '0.3rem 0.6rem', fontSize: '0.8rem' }} onClick={playRecording}>▶️ Play</button>
-                    <button className="btn btn-outline" style={{ background: '#fff', padding: '0.3rem 0.6rem', fontSize: '0.8rem' }} onClick={() => { setRecordedBlobUrl(null); setTranscript(''); setProcessedUserCurve([]); }}>🔄 Re-record</button>
+                    <button className="btn btn-outline" style={{ background: '#fff', padding: '0.3rem 0.6rem', fontSize: '0.8rem' }} onClick={() => { setRecordedBlobUrl(null); setTranscript(''); setUserCurve([]); setProcessedUserCurve([]); }}>🔄 Re-record</button>
                   </div>
                 </div>
               )}
@@ -770,6 +776,30 @@ export default function TonePractice() {
           ))}
         </div>
 
+        {/* Green Curve Pipeline Selector */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.75rem', marginBottom: '2rem', padding: '0.5rem 1rem', background: '#f1f5f9', borderRadius: '20px' }}>
+          <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--text-muted)' }}>Green Line:</span>
+          {(['v1', 'v2', 'v3', 'v4'] as const).map(p => (
+            <button
+              key={p}
+              onClick={() => setPipelineVersion(p)}
+              style={{
+                padding: '0.2rem 0.6rem',
+                fontSize: '0.7rem',
+                border: 'none',
+                borderRadius: '12px',
+                cursor: 'pointer',
+                background: pipelineVersion === p ? 'var(--primary)' : 'transparent',
+                color: pipelineVersion === p ? '#fff' : 'var(--text-muted)',
+                fontWeight: pipelineVersion === p ? 'bold' : 'normal',
+                textTransform: 'uppercase'
+              }}
+            >
+              {p}
+            </button>
+          ))}
+        </div>
+
         <div className="card" style={{ textAlign: 'center', minHeight: '400px', display: 'flex', flexDirection: 'column', justifyContent: 'center', position: 'relative' }}>
           <p style={{ color: 'var(--text-muted)', fontWeight: 'bold', fontSize: '0.75rem', letterSpacing: '0.1em', margin: 0 }}>TASK PROMPT</p>
           <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
@@ -795,8 +825,8 @@ export default function TonePractice() {
           }}>
             <svg width="500" height="300" style={{ overflow: 'visible' }}> {/* 💡 對齊 Demo 高度 */}
               {renderPitchLine(targetCurve, "#ff4d4d", 4, 0.8)}
-              {renderPitchLine(userCurve, "#00d2ff", 4, 1)}
-              {renderPitchLine(processedUserCurve, "#10b981", 4, 1)}
+              {processedUserCurve.length === 0 && renderPitchLine(userCurve, "#00d2ff", 4, 1)}
+              {processedUserCurve.length > 0 && renderPitchLine(processedUserCurve, "#10b981", 4, 1)}
             </svg>
           </div>
 
