@@ -163,7 +163,7 @@ def process_f0_v2(y, sr, target_len=300):
     
     return final_curve.tolist()
 
-def process_f0_v3(y, sr, target_len=300, conf_thresh=0.55, kernel_size=3):
+def process_f0_v3(y, sr, target_len=300, conf_thresh=0.55, kernel_size=3, ignore_start_ms=200, stable_window=5, max_stable_jump=20.0, drop_first_n_points=0, leading_plateau_window=50, plateau_jump_threshold=15.0, plateau_low_percentile_threshold=30, min_points_after_trim=30):
     if y.dtype != np.float32:
         y = y.astype(np.float32)
 
@@ -204,6 +204,35 @@ def process_f0_v3(y, sr, target_len=300, conf_thresh=0.55, kernel_size=3):
     p_min, p_max = np.log2(65), np.log2(400)
     norm_pitch = (p_log - p_min) / (p_max - p_min) * 100
     
+    # 🔥 New Shape-Based Plateau Trimming
+    inspect_len = min(leading_plateau_window, len(norm_pitch))
+    if inspect_len > 10:
+        # Calculate consecutive differences in the window
+        diffs = np.diff(norm_pitch[:inspect_len])
+        
+        # Find the first jump that exceeds the threshold
+        large_jumps = np.where(diffs > plateau_jump_threshold)[0]
+        
+        if len(large_jumps) > 0:
+            jump_idx = large_jumps[0]
+            
+            # The plateau candidate is the segment before the jump
+            plateau = norm_pitch[:jump_idx + 1]
+            
+            # Condition 1: Is it a "low" segment?
+            low_threshold = np.percentile(norm_pitch, plateau_low_percentile_threshold)
+            is_low = np.mean(plateau) < low_threshold
+            
+            # Condition 2: Is it "flat"? (Small standard deviation)
+            is_flat = np.std(plateau) < 5.0 # Max variance allowed for a plateau
+            
+            # Condition 3: Do we have enough points left after trimming?
+            has_enough_left = (len(norm_pitch) - (jump_idx + 1)) >= min_points_after_trim
+            
+            if is_low and is_flat and has_enough_left:
+                # Cut the plateau!
+                norm_pitch = norm_pitch[jump_idx + 1:]
+
     # Resample to target_len
     xp = np.linspace(0, len(norm_pitch) - 1, target_len)
     final_curve = np.interp(xp, np.arange(len(norm_pitch)), norm_pitch)
@@ -830,6 +859,18 @@ async def convert_to_mp3(file: UploadFile = File(...)):
         mp3_buffer,
         format="mp3",
         bitrate="192k"
+    )
+
+    mp3_buffer.seek(0)
+
+    # 回傳 mp3
+    return StreamingResponse(
+        mp3_buffer,
+        media_type="audio/mpeg",
+        headers={
+            "Content-Disposition":
+            "attachment; filename=recording.mp3"
+        }
     )
 
     mp3_buffer.seek(0)
