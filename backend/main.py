@@ -194,10 +194,30 @@ def process_f0_v3(y, sr, target_len=300, conf_thresh=0.55, kernel_size=3, ignore
         return [0] * target_len
         
     full_idx = np.arange(len(trimmed_pitch))
-    interpolated_pitch = np.interp(full_idx, valid_idx, valid_vals)
+    
+    # 🔥 New: Use cubic spline interpolation to avoid flat bottoms
+    from scipy.interpolate import interp1d
+    if len(valid_idx) >= 4:
+        try:
+            f = interp1d(valid_idx, valid_vals, kind='cubic', bounds_error=False, fill_value="extrapolate")
+            interpolated_pitch = f(full_idx)
+        except Exception as e:
+            print(f"Cubic interpolation failed: {e}. Falling back to linear.")
+            interpolated_pitch = np.interp(full_idx, valid_idx, valid_vals)
+    else:
+        interpolated_pitch = np.interp(full_idx, valid_idx, valid_vals)
     
     # Apply median filter after interpolation
     smoothed_pitch = scipy.signal.medfilt(interpolated_pitch, kernel_size=kernel_size)
+    
+    # 🔥 New: Apply Savitzky-Golay filter to smooth transitions into natural curves
+    try:
+        win_len = min(11, len(smoothed_pitch))
+        if win_len % 2 == 0: win_len -= 1
+        if win_len >= 5:
+            smoothed_pitch = scipy.signal.savgol_filter(smoothed_pitch, window_length=win_len, polyorder=2)
+    except Exception as e:
+        print(f"Savgol filter failed: {e}")
     
     # Scale to 0-100 (matching blue curve scale concept)
     p_log = np.log2(smoothed_pitch)
@@ -297,7 +317,7 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:5175", "http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -734,6 +754,16 @@ async def get_pitch(file: UploadFile = File(...)):
     except Exception as e:
         print("pitch error:", e)
         return [0] * 100
+
+@app.post("/get_pitch_v3")
+async def get_pitch_v3(file: UploadFile = File(...)):
+    try:
+        audio_bytes = await file.read()
+        curve = await get_audio_curve_v3(audio_bytes, file.filename)
+        return curve
+    except Exception as e:
+        print("pitch v3 error:", e)
+        return [0] * 300
 
 class UrlRequest(BaseModel):
     audio_url: str

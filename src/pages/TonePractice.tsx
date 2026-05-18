@@ -32,6 +32,7 @@ export default function TonePractice() {
   const [voicePref, setVoicePref] = useState<'female' | 'male' | 'system'>('system');
   const [targetCurve, setTargetCurve] = useState<number[]>([]);
   const [userCurve, setUserCurve] = useState<number[]>([]);
+  const [processedUserCurve, setProcessedUserCurve] = useState<number[]>([]);
 
   const toneWsRef = useRef<WebSocket | null>(null);
   const toneCtxRef = useRef<AudioContext | null>(null);
@@ -191,6 +192,7 @@ export default function TonePractice() {
       setIsEvaluating(false);
       setRecordedBlobUrl(null);
       setValidationError(null);
+      setProcessedUserCurve([]);
       setTranscript('');
     } else {
       setCurrentIndex(0);
@@ -203,6 +205,7 @@ export default function TonePractice() {
     if (currentIndex > 0) {
       setCurrentIndex(currentIndex - 1);
       setUserCurve([]);
+      setProcessedUserCurve([]);
       setRecordedBlobUrl(null);
       setTranscript('');
       setFeedback(null);
@@ -215,6 +218,7 @@ export default function TonePractice() {
     if (currentIndex < practiceQueue.length - 1) {
       setCurrentIndex(currentIndex + 1);
       setUserCurve([]);
+      setProcessedUserCurve([]);
       setRecordedBlobUrl(null);
       setTranscript('');
       setFeedback(null);
@@ -305,6 +309,7 @@ export default function TonePractice() {
         const blob = new Blob(chunks, { type: 'audio/webm' });
         const url = URL.createObjectURL(blob);
         setRecordedBlobUrl(url);
+        fetchProcessedUserCurve(blob);
       };
 
       recorder.start();
@@ -388,7 +393,7 @@ export default function TonePractice() {
   // getTtsText was removed because it was unused and caused build errors.
 
   const renderPitchLine = (data: number[], color: string, strokeWidth: number, opacity = 1) => {
-    if (!data || data.length < 2) return null;
+    if (!Array.isArray(data) || data.length < 2) return null;
 
     const SVG_WIDTH = 500;
     const SVG_HEIGHT = 300;
@@ -431,7 +436,7 @@ export default function TonePractice() {
   const fetchTargetCurveFromUrl = async (audioUrl: string) => {
     console.log("🌐 [DEBUG] Fetching baseline curve for:", audioUrl);
     try {
-      const res = await fetch(`${SPEECH_API_BASE}/get_pitch_from_url`, {
+      const res = await fetch(`${SPEECH_API_BASE}/get_pitch_from_url_v3`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -446,6 +451,36 @@ export default function TonePractice() {
       console.log("✅ [DEBUG] Target curve loaded:", curve.length);
     } catch (err) {
       console.error("❌ [DEBUG] Failed to fetch target curve:", err);
+    }
+  };
+
+  const fetchProcessedUserCurve = async (blob: Blob) => {
+    console.log("🌐 [DEBUG] Uploading to /get_pitch_v3 starts...");
+    const formData = new FormData();
+    formData.append('file', blob, 'recording.webm');
+    
+    try {
+      const res = await fetch(`${SPEECH_API_BASE}/get_pitch_v3`, {
+        method: "POST",
+        body: formData
+      });
+      
+      console.log(`🌐 [DEBUG] Response status: ${res.status}`);
+      
+      if (!res.ok) {
+        throw new Error(`Server returned status ${res.status}`);
+      }
+      
+      const curve = await res.json();
+      
+      if (Array.isArray(curve)) {
+        setProcessedUserCurve(curve);
+        console.log("✅ [DEBUG] Returned curve length:", curve.length);
+      } else {
+        console.error("❌ [DEBUG] Returned curve is not an array:", curve);
+      }
+    } catch (err: any) {
+      console.error("❌ [DEBUG] Failed to fetch processed user curve:", err.message || err);
     }
   };
 
@@ -596,7 +631,7 @@ export default function TonePractice() {
                   {/* 💡 略過文字顯示，只保留按鈕 */}
                   <div style={{ display: 'flex', gap: '0.5rem' }}>
                     <button className="btn btn-outline" style={{ background: '#fff', padding: '0.3rem 0.6rem', fontSize: '0.8rem' }} onClick={playRecording}>▶️ Play</button>
-                    <button className="btn btn-outline" style={{ background: '#fff', padding: '0.3rem 0.6rem', fontSize: '0.8rem' }} onClick={() => { setRecordedBlobUrl(null); setTranscript(''); }}>🔄 Re-record</button>
+                    <button className="btn btn-outline" style={{ background: '#fff', padding: '0.3rem 0.6rem', fontSize: '0.8rem' }} onClick={() => { setRecordedBlobUrl(null); setTranscript(''); setProcessedUserCurve([]); }}>🔄 Re-record</button>
                   </div>
                 </div>
               )}
@@ -639,7 +674,7 @@ export default function TonePractice() {
             {recordedBlobUrl && (
               <button className="btn btn-outline" style={{ background: '#fff' }} onClick={playRecording}>▶️ Play</button>
             )}
-            <button className="btn btn-outline" style={{ background: '#fff' }} onClick={() => { setFeedback(null); setRecordedBlobUrl(null); setTranscript(''); setUserCurve([]); }}>🔄 Re-record</button>
+            <button className="btn btn-outline" style={{ background: '#fff' }} onClick={() => { setFeedback(null); setRecordedBlobUrl(null); setTranscript(''); setUserCurve([]); setProcessedUserCurve([]); }}>🔄 Re-record</button>
           </div>
         </div>
 
@@ -761,6 +796,7 @@ export default function TonePractice() {
             <svg width="500" height="300" style={{ overflow: 'visible' }}> {/* 💡 對齊 Demo 高度 */}
               {renderPitchLine(targetCurve, "#ff4d4d", 4, 0.8)}
               {renderPitchLine(userCurve, "#00d2ff", 4, 1)}
+              {renderPitchLine(processedUserCurve, "#10b981", 4, 1)}
             </svg>
           </div>
 
