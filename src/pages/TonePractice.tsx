@@ -59,6 +59,7 @@ export default function TonePractice() {
   const toneCtxRef = useRef<AudioContext | null>(null);
   const toneProcessorRef = useRef<ScriptProcessorNode | null>(null);
   const toneMediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordingStartTimeRef = useRef<number>(0);
 
   useEffect(() => {
     const sId = routeStudentId || db.getCurrentUserId();
@@ -467,25 +468,125 @@ export default function TonePractice() {
 
   const startToneRecording = async () => {
     try {
+      // 1. Log diagnostics & MediaRecorder support info
+      const ua = navigator.userAgent;
+      const hasMediaRecorder = typeof MediaRecorder !== 'undefined';
+      console.log(`[DIAGNOSTICS] User Agent: ${ua}`);
+      console.log(`[DIAGNOSTICS] MediaRecorder available: ${hasMediaRecorder}`);
+
+      const candidateMimeTypes = [
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/mp4;codecs=mp4a.40.2',
+        'audio/mp4',
+        'audio/aac',
+        'audio/wav'
+      ];
+      const supportedTypes = candidateMimeTypes.filter(type => {
+        return hasMediaRecorder && typeof MediaRecorder.isTypeSupported === 'function' && MediaRecorder.isTypeSupported(type);
+      });
+      console.log(`[DIAGNOSTICS] Supported MIME types:`, supportedTypes);
+
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-      const recorder = new MediaRecorder(stream);
+      // Determine preferred MIME type options
+      const options: MediaRecorderOptions = {};
+      if (supportedTypes.length > 0) {
+        options.mimeType = supportedTypes[0];
+      }
+      console.log(`[DIAGNOSTICS] Selected MIME type option: ${options.mimeType || 'default'}`);
+
+      const recorder = new MediaRecorder(stream, options);
       const chunks: Blob[] = [];
 
       recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunks.push(e.data);
+        if (e.data && e.data.size > 0) {
+          chunks.push(e.data);
+          console.log(`[DIAGNOSTICS] Chunk received - size: ${e.data.size} bytes, type: ${e.data.type}`);
+        }
       };
 
-      recorder.onstop = () => {
-        const mimeType = recorder.mimeType || 'audio/webm';
-        const blob = new Blob(chunks, { type: mimeType });
+      recorder.onstop = async () => {
+        // Safari may trigger onstop before all chunks are pushed or flushed.
+        // Wait 150ms to allow final chunk in the stream buffer to be fully processed by ondataavailable.
+        await new Promise(resolve => setTimeout(resolve, 150));
+
+        const finalMimeType = recorder.mimeType || options.mimeType || 'audio/webm';
+        const durationSec = (Date.now() - recordingStartTimeRef.current) / 1000;
+        
+        console.log(`[DIAGNOSTICS] Recording stopped.`);
+        console.log(`[DIAGNOSTICS] Chunks collected: ${chunks.length}`);
+        console.log(`[DIAGNOSTICS] Calculated Duration: ${durationSec.toFixed(2)}s`);
+        console.log(`[DIAGNOSTICS] Recorder mimeType: ${recorder.mimeType}`);
+
+        const blob = new Blob(chunks, { type: finalMimeType });
+        console.log(`[DIAGNOSTICS] Created Blob - size: ${blob.size} bytes, type: ${blob.type}`);
+
+        // Validate blob size & duration
+        if (blob.size < 1000) {
+          console.error(`❌ [DIAGNOSTICS] Validation failed: Audio blob size is too small (${blob.size} bytes).`);
+          setValidationError("Recording failed: No audio captured. Please check your microphone and try again.");
+          return;
+        }
+
+        // Local playback validation
+        console.log(`[DIAGNOSTICS] Starting local playback validation...`);
+        const validation = await new Promise<{ isValid: boolean; error?: string; duration?: number }>((resolve) => {
+          const url = URL.createObjectURL(blob);
+          const audio = new Audio(url);
+          audio.muted = true;
+
+          const cleanup = () => {
+            audio.removeEventListener('loadedmetadata', onLoaded);
+            audio.removeEventListener('error', onError);
+            URL.revokeObjectURL(url);
+          };
+
+          const onLoaded = () => {
+            const dur = audio.duration;
+            cleanup();
+            if (isNaN(dur) || dur === 0 || dur === Infinity) {
+              resolve({ isValid: false, error: `Invalid audio duration (${dur}s)`, duration: dur });
+            } else {
+              resolve({ isValid: true, duration: dur });
+            }
+          };
+
+          const onError = () => {
+            cleanup();
+            resolve({ isValid: false, error: `Browser audio decoder error (code: ${audio.error?.code}, message: ${audio.error?.message})` });
+          };
+
+          audio.addEventListener('loadedmetadata', onLoaded);
+          audio.addEventListener('error', onError);
+          audio.load();
+
+          // Safety timeout to prevent hanging the UI in case of autoplay policy blocks
+          setTimeout(() => {
+            cleanup();
+            resolve({ isValid: true, duration: 0, isFallback: true } as any);
+          }, 1500);
+        });
+
+        if (!validation.isValid) {
+          console.error(`❌ [DIAGNOSTICS] Local validation failed: ${validation.error}`);
+          setValidationError(`Recording failed: Audio file is corrupted or silent. (${validation.error})`);
+          return;
+        }
+
+        console.log(`✅ [DIAGNOSTICS] Local validation passed successfully. Duration: ${validation.duration}s`);
+
         const url = URL.createObjectURL(blob);
         setRecordedBlobUrl(url);
         fetchProcessedUserCurve(blob);
         startBackgroundAudioUpload(blob);
       };
 
-      recorder.start();
+      // Record start time
+      recordingStartTimeRef.current = Date.now();
+      
+      // Start recording with 250ms timeslice to flush chunks periodically
+      recorder.start(250);
       toneMediaRecorderRef.current = recorder;
 
       // 🔥 建立 WebSocket
