@@ -405,8 +405,8 @@ def compute_score(user_curve, target_curve):
         if len(user_arr) < 5 or len(target_arr) < 5:
             return 0.0
 
-        # 計算 DTW
-        dist, _ = fastdtw(user_arr, target_arr, dist=euclidean)
+        # 計算 DTW (使用絕對值距離，避免 scalar 造成 scipy.spatial.distance.euclidean 拋出 ValueError)
+        dist, _ = fastdtw(user_arr, target_arr, dist=lambda a, b: abs(a - b))
         
         # 慈悲評分公式
         avg_dist = dist / len(target_arr)
@@ -432,7 +432,12 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5175", "http://localhost:5173"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:5175",
+        "https://study-coach-66ae6.web.app",
+        "https://study-coach-66ae6.firebaseapp.com"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { getStudentFlashcards, mapFirestoreToLocal, logRetrievalAttempt } from '../lib/firebaseDb';
+import { getStudentFlashcards, mapFirestoreToLocal, logRetrievalAttempt, uploadAsset, logToneAttempt } from '../lib/firebaseDb';
 import { db } from '../lib/db';
 import { LearningItem, StudentLearningRecord, ChunkItem, ReadingItem } from '../lib/types';
 import { retrievalEngine } from '../lib/retrievable/retrievalEngine';
@@ -34,6 +34,26 @@ export default function TonePractice() {
   const [userCurve, setUserCurve] = useState<number[]>([]);
   const [processedUserCurve, setProcessedUserCurve] = useState<number[]>([]);
   const [pipelineVersion, setPipelineVersion] = useState<'v1' | 'v2' | 'v3' | 'v4'>('v3');
+  const [matchScore, setMatchScore] = useState<number | null>(null);
+  const [isScoringLoading, setIsScoringLoading] = useState(false);
+
+  const [currentRecordingInfo, setCurrentRecordingInfo] = useState<{
+    blob: Blob | null;
+    attemptId: string | null;
+    audioUrl: string | null;
+    isUploading: boolean;
+    uploadError: boolean;
+    mimeType: string | null;
+  }>({
+    blob: null,
+    attemptId: null,
+    audioUrl: null,
+    isUploading: false,
+    uploadError: false,
+    mimeType: null
+  });
+  const [selectedRating, setSelectedRating] = useState<number | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
   const toneWsRef = useRef<WebSocket | null>(null);
   const toneCtxRef = useRef<AudioContext | null>(null);
@@ -183,48 +203,135 @@ export default function TonePractice() {
     }
   }, [currentIndex, practiceQueue]);
 
-  const handleNext = () => {
-    if (currentIndex < practiceQueue.length - 1) {
-      setCurrentIndex(i => i + 1);
-      setTypedAnswer('');
-      setFeedback(null);
-      setShowHints(false);
-      setIsRecording(false);
-      setIsEvaluating(false);
-      setRecordedBlobUrl(null);
-      setValidationError(null);
-      setProcessedUserCurve([]);
-      setTranscript('');
-    } else {
-      setCurrentIndex(0);
-      setPracticeQueue([]);
-      window.location.reload();
+  const recordingInfoRef = useRef(currentRecordingInfo);
+  useEffect(() => {
+    recordingInfoRef.current = currentRecordingInfo;
+  }, [currentRecordingInfo]);
+
+  const resetToneStates = () => {
+    setTypedAnswer('');
+    setFeedback(null);
+    setShowHints(false);
+    setIsRecording(false);
+    setIsEvaluating(false);
+    setRecordedBlobUrl(null);
+    setValidationError(null);
+    setTranscript('');
+    setUserCurve([]);
+    setProcessedUserCurve([]);
+    setMatchScore(null);
+    setIsScoringLoading(false);
+    setSelectedRating(null);
+    setIsSaving(false);
+    setCurrentRecordingInfo({
+      blob: null,
+      attemptId: null,
+      audioUrl: null,
+      isUploading: false,
+      uploadError: false,
+      mimeType: null
+    });
+  };
+
+  const handleReRecord = () => {
+    resetToneStates();
+  };
+
+  const RATING_OPTIONS = [
+    { rating: 1, label: "Not familiar yet" },
+    { rating: 2, label: "Getting better" },
+    { rating: 3, label: "Good" },
+    { rating: 4, label: "Very confident" }
+  ];
+
+  const handleSaveAndNext = async () => {
+    if (selectedRating === null) {
+      setValidationError("Please select how you feel about this attempt.");
+      return;
+    }
+
+    const currentPair = practiceQueue[currentIndex];
+    if (!currentPair) return;
+
+    setIsSaving(true);
+    setValidationError(null);
+
+    let audioUrl = recordingInfoRef.current.audioUrl;
+    let uploadError = recordingInfoRef.current.uploadError;
+
+    if (recordingInfoRef.current.isUploading) {
+      console.log("[DEBUG] Audio upload still in progress. Waiting up to 10 seconds...");
+      try {
+        await new Promise<void>((resolve) => {
+          let checkCount = 0;
+          const interval = setInterval(() => {
+            checkCount++;
+            if (!recordingInfoRef.current.isUploading) {
+              clearInterval(interval);
+              audioUrl = recordingInfoRef.current.audioUrl;
+              uploadError = recordingInfoRef.current.uploadError;
+              resolve();
+            } else if (checkCount > 100) {
+              clearInterval(interval);
+              uploadError = true;
+              resolve();
+            }
+          }, 100);
+        });
+      } catch (e) {
+        uploadError = true;
+      }
+    }
+
+    const ratingOption = RATING_OPTIONS.find(o => o.rating === selectedRating);
+    const selfRatingLabel = ratingOption ? ratingOption.label : "";
+
+    try {
+      await logToneAttempt(
+        studentId as string,
+        {
+          audioUrl: audioUrl || null,
+          audioMimeType: recordingInfoRef.current.mimeType || null,
+          uploadError: uploadError || undefined,
+          selectedPipelineVersion: pipelineVersion,
+          processedUserCurve: processedUserCurve,
+          targetCurve: targetCurve || undefined,
+          selfRating: selectedRating,
+          selfRatingLabel,
+          score: matchScore
+        },
+        currentPair.record as any
+      );
+
+      console.log("✅ [DEBUG] Tone attempt logged successfully in Firestore");
+
+      if (currentIndex < practiceQueue.length - 1) {
+        setCurrentIndex(i => i + 1);
+        resetToneStates();
+      } else {
+        setCurrentIndex(0);
+        setPracticeQueue([]);
+        window.location.reload();
+      }
+    } catch (err: any) {
+      console.error("❌ [DEBUG] Failed to save tone attempt:", err);
+      setValidationError("Failed to save attempt. Please try again.");
+    } finally {
+      setIsSaving(false);
     }
   };
 
   const handlePrevCard = () => {
     if (currentIndex > 0) {
       setCurrentIndex(currentIndex - 1);
-      setUserCurve([]);
-      setProcessedUserCurve([]);
-      setRecordedBlobUrl(null);
-      setTranscript('');
-      setFeedback(null);
-      setShowHints(false);
-      setValidationError(null);
+      resetToneStates();
     }
   };
 
   const handleNextCard = () => {
     if (currentIndex < practiceQueue.length - 1) {
       setCurrentIndex(currentIndex + 1);
-      setUserCurve([]);
-      setProcessedUserCurve([]);
-      setRecordedBlobUrl(null);
-      setTranscript('');
-      setFeedback(null);
-      setShowHints(false);
-      setValidationError(null);
+      resetToneStates();
     }
   };
 
@@ -293,7 +400,70 @@ export default function TonePractice() {
     }
   };
 
-  // handleToggleRecording was removed because it was unused and caused build errors.
+  const blobToBase64 = (blob: Blob): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        resolve(reader.result as string);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  };
+
+  const getExtensionFromMimeType = (mimeType: string): string => {
+    if (!mimeType) return 'webm';
+    const type = mimeType.toLowerCase();
+    if (type.includes('audio/webm') || type.includes('video/webm')) return 'webm';
+    if (type.includes('audio/mp4') || type.includes('video/mp4')) return 'mp4';
+    if (type.includes('audio/mpeg') || type.includes('audio/mp3')) return 'mp3';
+    if (type.includes('audio/wav') || type.includes('audio/x-wav')) return 'wav';
+    if (type.includes('audio/ogg')) return 'ogg';
+    if (type.includes('audio/x-m4a') || type.includes('audio/aac') || type.includes('audio/m4a')) return 'm4a';
+    return 'webm';
+  };
+
+  const startBackgroundAudioUpload = async (blob: Blob) => {
+    const currentPair = practiceQueue[currentIndex];
+    if (!currentPair) return;
+
+    const randomSuffix = Math.floor(Math.random() * 10000);
+    const attemptId = `attempt_${Date.now()}_${randomSuffix}`;
+    const ext = getExtensionFromMimeType(blob.type);
+    const mimeType = blob.type || 'audio/webm';
+    const storagePath = `studentAudio/${studentId}/${currentPair.item.id}/toneAttempts/${attemptId}.${ext}`;
+
+    setCurrentRecordingInfo({
+      blob,
+      attemptId,
+      audioUrl: null,
+      isUploading: true,
+      uploadError: false,
+      mimeType
+    });
+
+    try {
+      console.log(`[DEBUG] Starting background audio upload. Path: ${storagePath}, MIME: ${mimeType}`);
+      const base64 = await blobToBase64(blob);
+      const audioUrl = await uploadAsset(base64, storagePath);
+      console.log("✅ [DEBUG] Background audio upload success:", audioUrl);
+      
+      setCurrentRecordingInfo(prev => {
+        if (prev.attemptId === attemptId) {
+          return { ...prev, audioUrl, isUploading: false, uploadError: false };
+        }
+        return prev;
+      });
+    } catch (err: any) {
+      console.error("❌ [DEBUG] Background audio upload failed:", err);
+      setCurrentRecordingInfo(prev => {
+        if (prev.attemptId === attemptId) {
+          return { ...prev, isUploading: false, uploadError: true };
+        }
+        return prev;
+      });
+    }
+  };
 
   const startToneRecording = async () => {
     try {
@@ -307,10 +477,12 @@ export default function TonePractice() {
       };
 
       recorder.onstop = () => {
-        const blob = new Blob(chunks, { type: 'audio/webm' });
+        const mimeType = recorder.mimeType || 'audio/webm';
+        const blob = new Blob(chunks, { type: mimeType });
         const url = URL.createObjectURL(blob);
         setRecordedBlobUrl(url);
         fetchProcessedUserCurve(blob);
+        startBackgroundAudioUpload(blob);
       };
 
       recorder.start();
@@ -482,11 +654,59 @@ export default function TonePractice() {
       if (Array.isArray(curve)) {
         setProcessedUserCurve(curve);
         console.log("✅ [DEBUG] Returned curve length:", curve.length);
+        fetchContourScore(targetCurve, curve);
       } else {
         console.error("❌ [DEBUG] Returned curve is not an array:", curve);
       }
     } catch (err: any) {
       console.error("❌ [DEBUG] Failed to fetch processed user curve:", err.message || err);
+    }
+  };
+
+  const fetchContourScore = async (target: number[], user: number[]) => {
+    console.log("📊 [DEBUG] targetCurve length:", target ? target.length : 'null/undefined');
+    console.log("📊 [DEBUG] processedUserCurve length:", user ? user.length : 'null/undefined');
+    if (target && target.length > 0) {
+      console.log("📊 [DEBUG] targetCurve (first 5):", target.slice(0, 5));
+    }
+    if (user && user.length > 0) {
+      console.log("📊 [DEBUG] processedUserCurve (first 5):", user.slice(0, 5));
+    }
+
+    if (!target || target.length === 0 || !user || user.length === 0) {
+      console.log("⚠️ [DEBUG] Skip scoring: target or user curve is empty.");
+      return;
+    }
+    setIsScoringLoading(true);
+    setMatchScore(null);
+    console.log("🌐 [DEBUG] Fetching tone match score...");
+    try {
+      const res = await fetch(`${SPEECH_API_BASE}/score`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          user_curve: user,
+          target_curve: target
+        })
+      });
+      console.log(`🌐 [DEBUG] Score response status: ${res.status}`);
+      if (!res.ok) {
+        throw new Error(`Server returned status ${res.status}`);
+      }
+      const data = await res.json();
+      console.log("📊 [DEBUG] Score API response JSON:", data);
+      if (typeof data.score === 'number') {
+        setMatchScore(data.score);
+        console.log("✅ [DEBUG] Tone Match Score loaded:", data.score);
+      } else {
+        console.error("❌ [DEBUG] Invalid score response format:", data);
+      }
+    } catch (err: any) {
+      console.error("❌ [DEBUG] Failed to fetch tone match score:", err.message || err);
+    } finally {
+      setIsScoringLoading(false);
     }
   };
 
@@ -496,7 +716,29 @@ export default function TonePractice() {
       audio.play();
     }
   };
-  // speak was removed because it was unused and caused build errors.
+
+  const playTargetAudio = () => {
+    const current = practiceQueue[currentIndex];
+    if (!current) return;
+
+    const urls = current.record?.audioUrls;
+    const audioUrl = urls?.studentWord ||
+      urls?.word ||
+      urls?.studentChunk ||
+      urls?.chunk ||
+      urls?.focusExpression ||
+      urls?.aiWord ||
+      urls?.aiChunk;
+
+    if (audioUrl) {
+      const audio = new Audio(audioUrl);
+      audio.play().catch(err => {
+        console.error("❌ Failed to play target audio:", err);
+      });
+    } else {
+      console.warn("⚠️ No target audio URL resolved.");
+    }
+  };
 
 
 
@@ -609,7 +851,7 @@ export default function TonePractice() {
           {answerMode === 'voice' && (
             <div style={{ marginBottom: '1.5rem', textAlign: 'center' }}>
               {!recordedBlobUrl ? (
-                <>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem' }}>
                   <button
                     className={`btn ${isRecording ? 'btn-danger' : 'btn-primary'}`}
                     style={{
@@ -620,7 +862,6 @@ export default function TonePractice() {
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      margin: '0 auto',
                       boxShadow: isRecording ? '0 0 15px rgba(239, 68, 68, 0.5)' : 'none',
                       transition: 'all 0.2s ease'
                     }}
@@ -628,16 +869,16 @@ export default function TonePractice() {
                   >
                     {isRecording ? '⏹' : '🎤'}
                   </button>
-                  <p style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: isRecording ? 'var(--danger)' : 'var(--text-muted)' }}>
+                  <p style={{ marginTop: '0.2rem', fontSize: '0.85rem', color: isRecording ? 'var(--danger)' : 'var(--text-muted)' }}>
                     {isRecording ? 'Recording...' : 'Click to Speak'}
                   </p>
-                </>
+                </div>
               ) : (
                 <div style={{ padding: '1rem', background: '#f0fdf4', borderRadius: '12px', border: '1px solid #bbf7d0', display: 'inline-block' }}>
                   {/* 💡 略過文字顯示，只保留按鈕 */}
-                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'center' }}>
                     <button className="btn btn-outline" style={{ background: '#fff', padding: '0.3rem 0.6rem', fontSize: '0.8rem' }} onClick={playRecording}>▶️ Play</button>
-                    <button className="btn btn-outline" style={{ background: '#fff', padding: '0.3rem 0.6rem', fontSize: '0.8rem' }} onClick={() => { setRecordedBlobUrl(null); setTranscript(''); setUserCurve([]); setProcessedUserCurve([]); }}>🔄 Re-record</button>
+                    <button className="btn btn-outline" style={{ background: '#fff', padding: '0.3rem 0.6rem', fontSize: '0.8rem' }} onClick={handleReRecord}>🔄 Re-record</button>
                   </div>
                 </div>
               )}
@@ -650,12 +891,12 @@ export default function TonePractice() {
             </p>
           )}
 
+          {/* 💡 Tone 模式下改為檢查是否有錄音或曲線數據 */}
           <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center' }}>
             <button
               className="btn btn-primary"
               disabled={isEvaluating}
               onClick={() => {
-                // 💡 Tone 模式下改為檢查是否有錄音或曲線數據
                 if (answerMode === 'voice' && !recordedBlobUrl && userCurve.length === 0) {
                   setValidationError('Please record your answer first.');
                   return;
@@ -676,18 +917,75 @@ export default function TonePractice() {
         <div style={{ padding: '1.5rem', background: '#f0fdf4', borderRadius: '12px', border: '1px solid #bbf7d0', textAlign: 'center', margin: '1rem 0' }}>
           <h3 style={{ color: '#166534', marginBottom: '1rem' }}>Tone practice recorded</h3>
 
-          <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center' }}>
+          <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap', marginBottom: '1.5rem' }}>
+            <button className="btn btn-outline" style={{ background: '#fff' }} onClick={playTargetAudio}>🔊 Play Target Audio</button>
             {recordedBlobUrl && (
               <button className="btn btn-outline" style={{ background: '#fff' }} onClick={playRecording}>▶️ Play</button>
             )}
-            <button className="btn btn-outline" style={{ background: '#fff' }} onClick={() => { setFeedback(null); setRecordedBlobUrl(null); setTranscript(''); setUserCurve([]); setProcessedUserCurve([]); }}>🔄 Re-record</button>
+            <button className="btn btn-outline" style={{ background: '#fff' }} onClick={handleReRecord}>🔄 Re-record</button>
+          </div>
+
+          {/* 5. Self Rating Section */}
+          <div style={{ borderTop: '1px solid #bbf7d0', paddingTop: '1rem', marginTop: '1rem' }}>
+            <p style={{ fontWeight: 'bold', color: '#166534', marginBottom: '0.75rem', fontSize: '0.95rem' }}>
+              How do you feel about this attempt?
+            </p>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.75rem', maxWidth: '400px', margin: '0 auto' }}>
+              {[
+                { rating: 1, label: "🔴 Not familiar yet", color: '#fee2e2', border: '#fca5a5', text: '#991b1b' },
+                { rating: 2, label: "🟡 Getting better", color: '#fef3c7', border: '#fcd34d', text: '#92400e' },
+                { rating: 3, label: "🟢 Good", color: '#dcfce7', border: '#86efac', text: '#166534' },
+                { rating: 4, label: "🔵 Very confident", color: '#dbeafe', border: '#93c5fd', text: '#1e40af' }
+              ].map(opt => {
+                const isSelected = selectedRating === opt.rating;
+                return (
+                  <button
+                    key={opt.rating}
+                    type="button"
+                    style={{
+                      padding: '0.6rem 0.4rem',
+                      borderRadius: '8px',
+                      border: isSelected ? `2px solid ${opt.text}` : `1px solid ${opt.border}`,
+                      background: isSelected ? opt.color : '#fff',
+                      color: opt.text,
+                      fontSize: '0.85rem',
+                      fontWeight: isSelected ? 'bold' : 'normal',
+                      cursor: 'pointer',
+                      transform: isSelected ? 'scale(1.02)' : 'none',
+                      transition: 'all 0.15s ease',
+                      boxShadow: isSelected ? '0 2px 4px rgba(0,0,0,0.1)' : 'none'
+                    }}
+                    onClick={() => setSelectedRating(opt.rating)}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
 
+        {validationError && (
+          <p style={{ color: 'var(--danger)', fontSize: '0.85rem', marginBottom: '1rem', fontWeight: 'bold', textAlign: 'center' }}>
+            ⚠️ {validationError}
+          </p>
+        )}
+
         {feedback && (
           <div style={{ marginTop: '1.5rem' }}>
-            <button className="btn btn-primary" style={{ width: '100%', padding: '1rem' }} onClick={handleNext}>
-              {currentIndex < practiceQueue.length - 1 ? 'Next Card' : 'Finish Practice'}
+            <button
+              className="btn btn-primary"
+              style={{ width: '100%', padding: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}
+              onClick={handleSaveAndNext}
+              disabled={isSaving || selectedRating === null}
+            >
+              {isSaving ? (
+                <span>
+                  {currentRecordingInfo.isUploading ? "Uploading Audio..." : "Saving..."}
+                </span>
+              ) : (
+                currentIndex < practiceQueue.length - 1 ? 'Save & Next Card' : 'Save & Finish Practice'
+              )}
             </button>
           </div>
         )}
@@ -829,6 +1127,28 @@ export default function TonePractice() {
               {processedUserCurve.length > 0 && renderPitchLine(processedUserCurve, "#10b981", 4, 1)}
             </svg>
           </div>
+
+          {/* Tone Match Score Display (Temporarily Hidden) */}
+          {false && (isScoringLoading || matchScore !== null) && (
+            <div style={{ 
+              marginBottom: '1.5rem', 
+              fontSize: '1.2rem', 
+              fontWeight: 'bold', 
+              color: isScoringLoading ? 'var(--text-muted)' : '#10b981',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '0.5rem'
+            }}>
+              {isScoringLoading ? (
+                <span>⏳ Calculating score...</span>
+              ) : (
+                <span style={{ padding: '0.4rem 1rem', background: '#dcfce7', borderRadius: '20px', border: '1px solid #bbf7d0' }}>
+                  🎯 Tone Match Score: {matchScore} / 100
+                </span>
+              )}
+            </div>
+          )}
 
           {/* Card Navigation Controls */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', maxWidth: '500px', margin: '0 auto 1rem' }}>

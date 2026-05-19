@@ -461,3 +461,76 @@ export function mapFirestoreToLocal(docData: any): { item: ChunkItem, record: Ch
 
   return { item, record };
 }
+
+export async function logToneAttempt(
+  studentId: string,
+  logData: {
+    audioUrl: string | null;
+    audioMimeType: string | null;
+    uploadError?: boolean;
+    selectedPipelineVersion: string;
+    processedUserCurve: number[];
+    targetCurve?: number[];
+    selfRating: number;
+    selfRatingLabel: string;
+    score?: number | null;
+  },
+  record: ChunkRecord
+) {
+  try {
+    const flashcardPath = record.firebasePath || `learningRecords/${record.firebaseDocId || getFlashcardDocId(studentId, record.learningItemId)}`;
+    const flashcardRef = doc(firestore, flashcardPath);
+    
+    const docSnap = await getDoc(flashcardRef);
+    if (!docSnap.exists()) {
+      throw new Error(`Flashcard not found at path: ${flashcardPath}`);
+    }
+    
+    const docData = docSnap.data();
+    const history = docData.retrievalHistory || [];
+    console.log(`[DEBUG] Previous retrievalHistory length (for tone): ${history.length}`);
+
+    const isCorrect = logData.selfRating >= 3; // 3 = Good, 4 = Very confident
+    const now = new Date().toISOString();
+    const randomSuffix = Math.floor(Math.random() * 10000);
+    const attemptId = `attempt_${Date.now()}_${randomSuffix}`;
+
+    const newAttempt = sanitizeForFirestore({
+      attemptId,
+      createdAt: now,
+      practiceMode: 'tonePractice',
+      isCorrect,
+      selfRating: logData.selfRating,
+      selfRatingLabel: logData.selfRatingLabel,
+      audioUrl: logData.audioUrl || null,
+      audioMimeType: logData.audioMimeType || null,
+      uploadError: logData.uploadError || null,
+      selectedPipelineVersion: logData.selectedPipelineVersion,
+      processedUserCurve: logData.processedUserCurve,
+      targetCurve: logData.targetCurve || null,
+      score: logData.score || null
+    });
+
+    const updatedHistory = [...history, newAttempt];
+    const correctCount = updatedHistory.filter((a: any) => a.isCorrect === true).length;
+    const incorrectCount = updatedHistory.filter((a: any) => a.isCorrect === false).length;
+
+    const updates = {
+      retrievalHistory: updatedHistory,
+      retrievalCount: updatedHistory.length,
+      correctCount,
+      incorrectCount,
+      lastRetrievedAt: serverTimestamp(),
+      lastResult: isCorrect ? 'correct' : 'incorrect',
+      updatedAt: serverTimestamp()
+    };
+
+    console.log(`[DEBUG] Logging tone attempt: ${attemptId}, rating: ${logData.selfRatingLabel}`);
+    await updateDoc(flashcardRef, updates);
+    console.log('[DEBUG] Tone attempt logged successfully in Firestore');
+  } catch (error) {
+    console.error('Error logging tone attempt:', error);
+    throw error;
+  }
+}
+

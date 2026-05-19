@@ -80,11 +80,42 @@ function ExpandableRow({ stat }: { stat: WordStat }) {
     }
   };
 
+  const getToneRatingDisplay = (rating: number, selfRatingLabel?: string) => {
+    switch (rating) {
+      case 1:
+        return { text: '🔴 Needs Review', color: '#dc2626' };
+      case 2:
+        return { text: '🟡 Improving', color: '#d97706' };
+      case 3:
+        return { text: '🟢 Good', color: '#059669' };
+      case 4:
+        return { text: '🌟 Confident', color: '#2563eb' };
+      default:
+        if (selfRatingLabel) {
+          const label = selfRatingLabel.toLowerCase();
+          if (label.includes('not familiar')) return { text: '🔴 Needs Review', color: '#dc2626' };
+          if (label.includes('better')) return { text: '🟡 Improving', color: '#d97706' };
+          if (label.includes('good')) return { text: '🟢 Good', color: '#059669' };
+          if (label.includes('confident')) return { text: '🌟 Confident', color: '#2563eb' };
+        }
+        return { text: 'Tone Practice', color: 'var(--text-main)' };
+    }
+  };
+
+  const getLatestText = (latest: any) => {
+    if (!latest) return 'No attempts';
+    const dateStr = new Date(latest.date).toLocaleDateString();
+    if (latest.mode === 'tonePractice') {
+      const display = getToneRatingDisplay(latest.selfRating, latest.selfRatingLabel);
+      const icon = display.text.split(' ')[0];
+      return `${dateStr} ${icon}`;
+    }
+    return `${dateStr} ${latest.passed ? '✅' : '❌'}`;
+  };
+
   const sColor = getStatusColor(stat.record.status);
   const accuracyText = stat.attempts.length > 0 ? `${Math.round(stat.accuracy * 100)}%` : '-';
-  const latestText = stat.latest
-    ? `${new Date(stat.latest.date).toLocaleDateString()} ${stat.latest.passed ? '✅' : '❌'}`
-    : 'No attempts';
+  const latestText = getLatestText(stat.latest);
 
   return (
     <div
@@ -188,9 +219,20 @@ function ExpandableRow({ stat }: { stat: WordStat }) {
                   <span style={{ color: 'var(--text-muted)' }}>
                     {stat.attempts.length - idx}. {new Date(a.date).toLocaleString()}
                   </span>
-                  <span style={{ fontWeight: 'bold', color: a.passed ? '#059669' : '#dc2626' }}>
-                    {a.passed ? '✅ Passed' : '❌ Failed'}
-                  </span>
+                  {(a as any).mode === 'tonePractice' ? (
+                    (() => {
+                      const display = getToneRatingDisplay((a as any).selfRating, (a as any).selfRatingLabel);
+                      return (
+                        <span style={{ fontWeight: 'bold', color: display.color }}>
+                          {display.text}
+                        </span>
+                      );
+                    })()
+                  ) : (
+                    <span style={{ fontWeight: 'bold', color: a.passed ? '#059669' : '#dc2626' }}>
+                      {a.passed ? '✅ Passed' : '❌ Failed'}
+                    </span>
+                  )}
                 </div>
               ))}
             </div>
@@ -362,7 +404,9 @@ export default function ReportCard() {
             mode: h.practiceMode || 'flashcard',
             typedAnswer: h.studentAnswer || '',
             expectedAnswer: h.expectedAnswer || '',
-            usedHint: false
+            usedHint: false,
+            selfRating: h.selfRating,
+            selfRatingLabel: h.selfRatingLabel
           })).sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
           console.log(`[DEBUG] Card: ${item.focusExpression}, retrievalCount: ${record.retrievalCount}, historyLength: ${history.length}`);
