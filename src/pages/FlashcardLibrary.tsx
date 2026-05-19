@@ -18,6 +18,53 @@ type AssignedReadingTask = {
 
 type ViewMode = 'list' | 'cards';
 
+const hasStudentVoiceAudio = (record: ChunkRecord): boolean => {
+  if (record.audioUrls?.studentWord || record.audioUrls?.focusExpression || record.audioUrls?.word || record.audioUrls?.studentChunk || record.audioUrls?.chunk) {
+    return true;
+  }
+  if (record.retrievalHistory && Array.isArray(record.retrievalHistory)) {
+    return record.retrievalHistory.some(attempt => attempt && attempt.audioUrl);
+  }
+  return false;
+};
+
+const playMyVoiceAudio = (record: ChunkRecord) => {
+  let url = record.audioUrls?.studentWord || record.audioUrls?.focusExpression || record.audioUrls?.word || record.audioUrls?.studentChunk || record.audioUrls?.chunk;
+  
+  if (!url && record.retrievalHistory && Array.isArray(record.retrievalHistory)) {
+    for (let i = record.retrievalHistory.length - 1; i >= 0; i--) {
+      const attempt = record.retrievalHistory[i];
+      if (attempt && attempt.audioUrl) {
+        url = attempt.audioUrl;
+        break;
+      }
+    }
+  }
+
+  console.log(`[DEBUG] Attempting to play My Voice. Found URL:`, url);
+
+  if (!url) {
+    console.warn(`[DEBUG] Play My Voice failed: No audio URL found on record`, record);
+    alert("No student voice recording found for this card.");
+    return;
+  }
+
+  try {
+    const audio = new Audio(url);
+    audio.play()
+      .then(() => {
+        console.log(`[DEBUG] Audio playback started successfully for URL: ${url}`);
+      })
+      .catch((err: any) => {
+        console.error(`❌ [DEBUG] Audio playback rejected for URL: ${url}. Error:`, err);
+        alert(`Playback blocked by browser/device. Try tapping the button again. (Error: ${err.message || err})`);
+      });
+  } catch (err) {
+    console.error(`❌ [DEBUG] Audio instantiation failed for URL: ${url}. Error:`, err);
+    alert(`Failed to play audio. (Error: ${err})`);
+  }
+};
+
 export default function FlashcardLibrary() {
   const navigate = useNavigate();
   const { studentId: routeStudentId } = useParams<{ studentId: string }>();
@@ -313,14 +360,13 @@ export default function FlashcardLibrary() {
                            🔊 AI Voice
                         </button>
                       
-                      {isComplete && (((record as ChunkRecord).audioUrls?.studentWord || (record as ChunkRecord).audioUrls?.focusExpression || (record as ChunkRecord).audioUrls?.word) ? (
+                      {isComplete && (hasStudentVoiceAudio(record as ChunkRecord) ? (
                         <button
                            className="btn btn-outline"
                            style={{ padding: '0.2rem 0.4rem', fontSize: '0.75rem', borderRadius: '4px', background: '#f0fdf4', color: '#166534', border: '1px solid #bbf7d0' }}
                            onClick={(e) => {
                              e.stopPropagation();
-                             const url = (record as ChunkRecord).audioUrls?.studentWord || (record as ChunkRecord).audioUrls?.focusExpression || (record as ChunkRecord).audioUrls?.word;
-                             if (url) new Audio(url).play().catch(() => {});
+                             playMyVoiceAudio(record as ChunkRecord);
                            }}
                            title="Play My Voice"
                         >
@@ -439,14 +485,13 @@ export default function FlashcardLibrary() {
                   >
                       🔊 AI Voice
                   </button>
-                  {(isComplete && ((record as ChunkRecord).audioUrls?.studentWord || (record as ChunkRecord).audioUrls?.focusExpression || (record as ChunkRecord).audioUrls?.word)) ? (
+                  {(isComplete && hasStudentVoiceAudio(record as ChunkRecord)) ? (
                     <button
                         className="btn btn-outline"
                         style={{ padding: '0.15rem 0.3rem', fontSize: '0.7rem', borderRadius: '4px', background: '#f0fdf4', color: '#166534', border: '1px solid #bbf7d0' }}
                         onClick={(e) => {
                           e.stopPropagation();
-                          const url = (record as ChunkRecord).audioUrls?.studentWord || (record as ChunkRecord).audioUrls?.focusExpression || (record as ChunkRecord).audioUrls?.word;
-                          if (url) new Audio(url).play().catch(() => {});
+                          playMyVoiceAudio(record as ChunkRecord);
                         }}
                     >
                         🎤 My Voice
