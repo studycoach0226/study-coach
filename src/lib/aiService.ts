@@ -3,7 +3,6 @@ import { buildMeaningPrompt } from "./prompts/wordMeaningPrompt";
 import { buildReadingExplainPrompt } from "./prompts/readingExplainPrompt";
 import { buildReadingReadPrompt } from "./prompts/readingReadPrompt";
 import { retrievalSelfTestPrompt } from "./prompts/retrievalSelfTestPrompt";
-import { connectionSuggestionsPrompt } from "./prompts/connectionSuggestionsPrompt";
 import { chineseCharacterPrompt } from "./prompts/chineseCharacterPrompt";
 import { SelectedConnection } from "./learning-schema/types";
 
