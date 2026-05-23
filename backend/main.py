@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 import os
 from supabase import create_client, Client
-from typing import List
+from typing import List, Optional
 import edge_tts
 import librosa
 import requests
@@ -163,7 +163,7 @@ def process_f0_v2(y, sr, target_len=300):
     
     return final_curve.tolist()
 
-def process_f0_v3(y, sr, target_len=300, conf_thresh=0.55, kernel_size=3, ignore_start_ms=200, stable_window=5, max_stable_jump=20.0, drop_first_n_points=0, leading_plateau_window=50, plateau_jump_threshold=15.0, plateau_low_percentile_threshold=30, min_points_after_trim=30):
+def process_f0_v3(y, sr, target_len=300, conf_thresh=0.55, kernel_size=3, ignore_start_ms=200, stable_window=5, max_stable_jump=20.0, drop_first_n_points=0, leading_plateau_window=50, plateau_jump_threshold=15.0, plateau_low_percentile_threshold=30, min_points_after_trim=30, min_freq=50.0, energy_thresh=None, min_voiced_ms=None):
     if y.dtype != np.float32:
         y = y.astype(np.float32)
 
@@ -173,7 +173,35 @@ def process_f0_v3(y, sr, target_len=300, conf_thresh=0.55, kernel_size=3, ignore
 
     # 濾除低信心與異常頻率
     pitch[conf < conf_thresh] = 0
-    pitch[pitch < 50] = 0
+    pitch[pitch < min_freq] = 0
+
+    # Optional RMS energy threshold filtering
+    if energy_thresh is not None and len(pitch) > 0:
+        hop_size = max(1, len(y) // len(pitch))
+        for i in range(len(pitch)):
+            chunk = y[i * hop_size : (i + 1) * hop_size]
+            rms = np.sqrt(np.mean(chunk**2)) if len(chunk) > 0 else 0.0
+            if rms < energy_thresh:
+                pitch[i] = 0.0
+
+    # Optional continuous voiced duration check
+    if min_voiced_ms is not None and len(pitch) > 0:
+        frame_duration_ms = (len(y) / sr * 1000.0) / len(pitch)
+        
+        # Find the longest contiguous sequence of voiced frames (pitch > 0)
+        longest_run = 0
+        current_run = 0
+        for is_voiced in (pitch > 0):
+            if is_voiced:
+                current_run += 1
+                if current_run > longest_run:
+                    longest_run = current_run
+            else:
+                current_run = 0
+                
+        max_voiced_duration_ms = longest_run * frame_duration_ms
+        if max_voiced_duration_ms < min_voiced_ms:
+            return [0] * target_len
 
     # Find boundaries (trim silence)
     nonzero_idx = np.where(pitch > 0)[0]
@@ -544,7 +572,7 @@ async def get_audio_curve_v2(audio_bytes: bytes, filename: str):
             os.remove(temp_wav)
         return [0] * 300
 
-async def get_audio_curve_v3(audio_bytes: bytes, filename: str):
+async def get_audio_curve_v3(audio_bytes: bytes, filename: str, conf_thresh: float = 0.55, min_freq: float = 50.0, energy_thresh: Optional[float] = None, min_voiced_ms: Optional[float] = None):
     temp_input = f"temp_input_v3_{os.getpid()}_{filename}"
     temp_wav = f"temp_output_v3_{os.getpid()}.wav"
 
@@ -557,7 +585,13 @@ async def get_audio_curve_v3(audio_bytes: bytes, filename: str):
 
         y, sr = librosa.load(temp_wav, sr=16000)
 
-        curve = process_f0_v3(y, sr)
+        curve = process_f0_v3(
+            y, sr,
+            conf_thresh=conf_thresh,
+            min_freq=min_freq,
+            energy_thresh=energy_thresh,
+            min_voiced_ms=min_voiced_ms
+        )
 
         if os.path.exists(temp_input):
             os.remove(temp_input)
@@ -907,10 +941,24 @@ async def get_pitch(file: UploadFile = File(...)):
         return [0] * 100
 
 @app.post("/get_pitch_v3")
-async def get_pitch_v3(file: UploadFile = File(...)):
+async def get_pitch_v3(
+    file: UploadFile = File(...),
+    conf_thresh: Optional[float] = 0.55,
+    min_freq: Optional[float] = 50.0,
+    energy_thresh: Optional[float] = None,
+    min_voiced_ms: Optional[float] = None
+):
     try:
+        print(f"INFO: /get_pitch_v3 params -> conf_thresh: {conf_thresh}, min_freq: {min_freq}, energy_thresh: {energy_thresh}, min_voiced_ms: {min_voiced_ms}")
         audio_bytes = await file.read()
-        curve = await get_audio_curve_v3(audio_bytes, file.filename)
+        curve = await get_audio_curve_v3(
+            audio_bytes,
+            file.filename,
+            conf_thresh=conf_thresh,
+            min_freq=min_freq,
+            energy_thresh=energy_thresh,
+            min_voiced_ms=min_voiced_ms
+        )
         return curve
     except Exception as e:
         print("pitch v3 error:", e)

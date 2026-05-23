@@ -10,6 +10,8 @@ import { GeneratedTask } from '../lib/retrievable/types';
 import { evaluateTypedAnswer } from '../lib/aiService';
 
 const SPEECH_API_BASE = (import.meta as any).env.VITE_SPEECH_API_BASE || "http://localhost:8000";
+const ENABLE_VISIBLE_WINDOW_SLICING = false;
+const ENABLE_BACKEND_GREEN_LINE = false;
 
 export default function TonePractice() {
   const navigate = useNavigate();
@@ -37,6 +39,18 @@ export default function TonePractice() {
   const [matchScore, setMatchScore] = useState<number | null>(null);
   const [isScoringLoading, setIsScoringLoading] = useState(false);
 
+  // Developer Tuning Panel states
+  const [devConfThresh, setDevConfThresh] = useState<number>(0.55);
+  const [devMinFreq, setDevMinFreq] = useState<number>(50);
+  const [devEnergyThresh, setDevEnergyThresh] = useState<string>('');
+  const [devMinVoicedMs, setDevMinVoicedMs] = useState<string>('');
+  const [devLiveEnergyThresh, setDevLiveEnergyThresh] = useState<number>(() => {
+    const saved = localStorage.getItem('devLiveEnergyThresh');
+    return saved !== null ? parseFloat(saved) : 0;
+  });
+  const [userEnergyCurve, setUserEnergyCurve] = useState<number[]>([]);
+  const [purpleCurve, setPurpleCurve] = useState<number[]>([]);
+  const [isSavedIndicator, setIsSavedIndicator] = useState(false);
   const [currentRecordingInfo, setCurrentRecordingInfo] = useState<{
     blob: Blob | null;
     attemptId: string | null;
@@ -59,6 +73,15 @@ export default function TonePractice() {
   const toneCtxRef = useRef<AudioContext | null>(null);
   const toneProcessorRef = useRef<ScriptProcessorNode | null>(null);
   const toneMediaRecorderRef = useRef<MediaRecorder | null>(null);
+
+  // Visible window slicing refs
+  const recordedChunksRef = useRef<Float32Array[]>([]);
+  const sentChunksQueueRef = useRef<{ startSample: number }[]>([]);
+  const annotatedPitchHistoryRef = useRef<{ pitch: number; startSample: number }[]>([]);
+  const currentSampleCountRef = useRef<number>(0);
+  const liveRmsQueueRef = useRef<number[]>([]);
+  const userCurveRef = useRef<number[]>([]);
+  const userEnergyCurveRef = useRef<number[]>([]);
 
   useEffect(() => {
     const sId = routeStudentId || db.getCurrentUserId();
@@ -218,6 +241,8 @@ export default function TonePractice() {
     setValidationError(null);
     setTranscript('');
     setUserCurve([]);
+    setUserEnergyCurve([]);
+    setPurpleCurve([]);
     setProcessedUserCurve([]);
     setMatchScore(null);
     setIsScoringLoading(false);
@@ -477,13 +502,78 @@ export default function TonePractice() {
       };
 
       recorder.onstop = () => {
+        // Immediately generate and set the purple curve from the final blue-line data
+        const filteredBlueCurve = userCurveRef.current.map((val, idx) => {
+          const energy = userEnergyCurveRef.current[idx] ?? 0;
+          return energy < devLiveEnergyThresh ? 0 : val;
+        });
+        const smoothed = generatePurpleCurve(filteredBlueCurve);
+        setPurpleCurve(smoothed);
+
         const mimeType = recorder.mimeType || 'audio/webm';
-        const blob = new Blob(chunks, { type: mimeType });
-        const url = URL.createObjectURL(blob);
+        const originalFullBlob = new Blob(chunks, { type: mimeType });
+        const url = URL.createObjectURL(originalFullBlob);
         setRecordedBlobUrl(url);
-        fetchProcessedUserCurve(blob);
-        startBackgroundAudioUpload(blob);
+        startBackgroundAudioUpload(originalFullBlob);
+
+        if (ENABLE_BACKEND_GREEN_LINE) {
+          if (ENABLE_VISIBLE_WINDOW_SLICING) {
+            try {
+              // Slice to get only the visible blue-line window (last 140 pitch points)
+              const visiblePoints = annotatedPitchHistoryRef.current.slice(-140);
+              console.log(`[DEBUG] Visible pitch points history length: ${visiblePoints.length} out of ${annotatedPitchHistoryRef.current.length}`);
+
+              if (visiblePoints.length > 0) {
+                const startSample = visiblePoints[0].startSample;
+                console.log(`[DEBUG] Slicing raw audio from sample index: ${startSample}`);
+
+                let currentOffset = 0;
+                const mergedSamples: number[] = [];
+
+                for (const chunk of recordedChunksRef.current) {
+                  const chunkEnd = currentOffset + chunk.length;
+                  if (chunkEnd > startSample) {
+                    const sliceStart = Math.max(0, startSample - currentOffset);
+                    const slice = chunk.subarray(sliceStart);
+                    for (let i = 0; i < slice.length; i++) {
+                      mergedSamples.push(slice[i]);
+                    }
+                  }
+                  currentOffset = chunkEnd;
+                }
+
+                const finalSamplesArray = new Float32Array(mergedSamples);
+                console.log(`[DEBUG] Original samples total count: ${currentSampleCountRef.current}, Sliced samples count: ${finalSamplesArray.length}`);
+
+                const slicedVisibleWindowBlob = encodeWAV(finalSamplesArray, 16000);
+                console.log(`[DEBUG] Sliced WAV blob size: ${slicedVisibleWindowBlob.size} bytes`);
+
+                fetchProcessedUserCurve(slicedVisibleWindowBlob);
+              } else {
+                console.warn("[DEBUG] No visible pitch points recorded, falling back to full original blob for analysis");
+                fetchProcessedUserCurve(originalFullBlob);
+              }
+            } catch (err) {
+              console.error("[DEBUG] Audio slicing failed, falling back to full original blob:", err);
+              fetchProcessedUserCurve(originalFullBlob);
+            }
+          } else {
+            // Standard Flow: use original full recorded blob
+            fetchProcessedUserCurve(originalFullBlob);
+          }
+        } else {
+          console.log("[DEBUG] Backend green line processing is disabled via ENABLE_BACKEND_GREEN_LINE flag.");
+        }
       };
+
+      // Visible window slicing initialization
+      recordedChunksRef.current = [];
+      sentChunksQueueRef.current = [];
+      annotatedPitchHistoryRef.current = [];
+      currentSampleCountRef.current = 0;
+      liveRmsQueueRef.current = [];
+      userCurveRef.current = [];
+      userEnergyCurveRef.current = [];
 
       recorder.start();
       toneMediaRecorderRef.current = recorder;
@@ -496,7 +586,34 @@ export default function TonePractice() {
       ws.onmessage = (event) => {
         const pitch = JSON.parse(event.data);
         // 🔥 即時更新藍線 (直接複製 Demo)
-        setUserCurve(prev => [...prev, ...pitch].slice(-140));
+        setUserCurve(prev => {
+          const next = [...prev, ...pitch].slice(-140);
+          userCurveRef.current = next;
+          return next;
+        });
+
+        // Align parallel energy curve
+        const rms = liveRmsQueueRef.current.shift() || 0;
+        if (Array.isArray(pitch)) {
+          setUserEnergyCurve(prev => {
+            const addedRms = pitch.map(() => rms);
+            const next = [...prev, ...addedRms].slice(-140);
+            userEnergyCurveRef.current = next;
+            return next;
+          });
+        }
+
+        if (ENABLE_VISIBLE_WINDOW_SLICING) {
+          // Align with the chunk sample count to track visible segment
+          const meta = sentChunksQueueRef.current.shift();
+          if (meta && Array.isArray(pitch)) {
+            const points = pitch.map(p => ({
+              pitch: p,
+              startSample: meta.startSample
+            }));
+            annotatedPitchHistoryRef.current.push(...points);
+          }
+        }
       };
 
       // 🔥 關鍵：強制指定 16000 採樣率
@@ -509,6 +626,22 @@ export default function TonePractice() {
 
       processor.onaudioprocess = (e) => {
         const input = e.inputBuffer.getChannelData(0);
+
+        if (ENABLE_VISIBLE_WINDOW_SLICING) {
+          // Accumulate raw PCM samples
+          recordedChunksRef.current.push(new Float32Array(input));
+          sentChunksQueueRef.current.push({ startSample: currentSampleCountRef.current });
+          currentSampleCountRef.current += input.length;
+        }
+
+        // Compute local RMS energy for this chunk
+        let sum = 0;
+        for (let i = 0; i < input.length; i++) {
+          sum += input[i] * input[i];
+        }
+        const rms = Math.sqrt(sum / input.length);
+        liveRmsQueueRef.current.push(rms);
+
         if (ws.readyState === 1) {
           ws.send(input.buffer); // 🔥 直接送 float32
         }
@@ -518,6 +651,8 @@ export default function TonePractice() {
       processor.connect(audioContext.destination);
 
       setUserCurve([]); // 🔥 清空舊曲線
+      setUserEnergyCurve([]); // 🔥 清空舊能量曲線
+      setPurpleCurve([]); // 🔥 清空舊紫色曲線
       setIsRecording(true);
       setRecordedBlobUrl(null);
       setValidationError(null);
@@ -633,12 +768,30 @@ export default function TonePractice() {
     if (pipelineVersion === 'v2') endpoint = '/get_pitch_v2';
     if (pipelineVersion === 'v4') endpoint = '/get_pitch_v4';
 
+    let queryParams: string[] = [];
+    if (endpoint === '/get_pitch_v3') {
+      queryParams.push(`conf_thresh=${devConfThresh}`);
+      queryParams.push(`min_freq=${devMinFreq}`);
+      if (devLiveEnergyThresh > 0) {
+        queryParams.push(`energy_thresh=${devLiveEnergyThresh}`);
+      } else if (devEnergyThresh !== '') {
+        queryParams.push(`energy_thresh=${devEnergyThresh}`);
+      }
+      if (devMinVoicedMs !== '') {
+        queryParams.push(`min_voiced_ms=${devMinVoicedMs}`);
+      }
+    }
+    const queryString = queryParams.length > 0 ? `?${queryParams.join('&')}` : '';
+    const fullUrl = `${SPEECH_API_BASE}${endpoint}${queryString}`;
+
+    console.log(`🌐 [DEBUG] Calling pitch API URL: ${fullUrl}`);
     console.log(`🌐 [DEBUG] Uploading to ${endpoint} starts...`);
+    
     const formData = new FormData();
     formData.append('file', blob, 'recording.webm');
     
     try {
-      const res = await fetch(`${SPEECH_API_BASE}${endpoint}`, {
+      const res = await fetch(fullUrl, {
         method: "POST",
         body: formData
       });
@@ -1127,8 +1280,15 @@ export default function TonePractice() {
           }}>
             <svg width="500" height="300" style={{ overflow: 'visible' }}> {/* 💡 對齊 Demo 高度 */}
               {renderPitchLine(targetCurve, "#ff4d4d", 4, 0.8)}
-              {processedUserCurve.length === 0 && renderPitchLine(userCurve, "#00d2ff", 4, 1)}
-              {processedUserCurve.length > 0 && renderPitchLine(processedUserCurve, "#10b981", 4, 1)}
+              {renderPitchLine(
+                userCurve.map((val, idx) => {
+                  const energy = userEnergyCurve[idx] ?? 0;
+                  return energy < devLiveEnergyThresh ? 0 : val;
+                }),
+                "#00d2ff", 4, (!isRecording && purpleCurve.length > 0) ? 0.35 : 1
+              )}
+              {!isRecording && purpleCurve.length > 0 && renderPitchLine(purpleCurve, "#8b5cf6", 4, 0.8)}
+              {ENABLE_BACKEND_GREEN_LINE && processedUserCurve.length > 0 && renderPitchLine(processedUserCurve, "#10b981", 4, 1)}
             </svg>
           </div>
 
@@ -1154,6 +1314,8 @@ export default function TonePractice() {
             </div>
           )}
 
+
+
           {/* Card Navigation Controls */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', maxWidth: '500px', margin: '0 auto 1rem' }}>
             <button 
@@ -1178,9 +1340,218 @@ export default function TonePractice() {
           </div>
 
           {renderTestInput()}
+
+          {/* Developer-only Sensitivity Control Panel */}
+          <div style={{
+            margin: '1.5rem auto 0',
+            padding: '0.5rem 1rem',
+            width: '100%',
+            maxWidth: '500px',
+            background: '#fffbeb',
+            border: '1px dashed #f59e0b',
+            borderRadius: '8px',
+            textAlign: 'left',
+            fontSize: '0.8rem',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '1rem'
+          }}>
+            <span style={{ color: '#b45309', fontWeight: 'bold', whiteSpace: 'nowrap' }}>
+              🛠️ Tuning (Blue/Purple):
+            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexGrow: 1, justifyContent: 'center' }}>
+              <span style={{ whiteSpace: 'nowrap' }}>Energy Threshold:</span>
+              <button
+                disabled={devLiveEnergyThresh <= 0}
+                onClick={() => setDevLiveEnergyThresh(prev => Math.max(0, Math.round((prev - 0.001) * 1000) / 1000))}
+                style={{
+                  padding: '1px 6px',
+                  background: '#fff',
+                  border: '1px solid #ccc',
+                  borderRadius: '4px',
+                  cursor: devLiveEnergyThresh <= 0 ? 'not-allowed' : 'pointer',
+                  fontWeight: 'bold',
+                  opacity: devLiveEnergyThresh <= 0 ? 0.5 : 1
+                }}
+              >
+                -
+              </button>
+              <span style={{ fontWeight: 'bold', color: 'var(--primary)', minWidth: '45px', textAlign: 'center' }}>
+                {devLiveEnergyThresh.toFixed(3)}
+              </span>
+              <button
+                disabled={devLiveEnergyThresh >= 0.05}
+                onClick={() => setDevLiveEnergyThresh(prev => Math.min(0.05, Math.round((prev + 0.001) * 1000) / 1000))}
+                style={{
+                  padding: '1px 6px',
+                  background: '#fff',
+                  border: '1px solid #ccc',
+                  borderRadius: '4px',
+                  cursor: devLiveEnergyThresh >= 0.05 ? 'not-allowed' : 'pointer',
+                  fontWeight: 'bold',
+                  opacity: devLiveEnergyThresh >= 0.05 ? 0.5 : 1
+                }}
+              >
+                +
+              </button>
+              <button
+                onClick={() => {
+                  localStorage.setItem('devLiveEnergyThresh', devLiveEnergyThresh.toString());
+                  setIsSavedIndicator(true);
+                  setTimeout(() => setIsSavedIndicator(false), 1000);
+                }}
+                style={{
+                  padding: '2px 8px',
+                  background: '#3b82f6',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontSize: '0.75rem',
+                  fontWeight: 'bold',
+                  marginLeft: '0.5rem',
+                  transition: 'background 0.2s'
+                }}
+              >
+                {isSavedIndicator ? 'Saved!' : 'Save'}
+              </button>
+            </div>
+            <button 
+              onClick={() => {
+                setDevConfThresh(0.55);
+                setDevMinFreq(50);
+                setDevEnergyThresh('');
+                setDevMinVoicedMs('');
+                setDevLiveEnergyThresh(0);
+                localStorage.setItem('devLiveEnergyThresh', '0');
+              }}
+              style={{
+                fontSize: '0.75rem',
+                padding: '2px 8px',
+                background: '#fef3c7',
+                border: '1px solid #d97706',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                whiteSpace: 'nowrap'
+              }}
+            >
+              Reset
+            </button>
+          </div>
         </div>
       </div>
 
     </div>
   );
 }
+
+const encodeWAV = (samples: Float32Array, sampleRate = 16000): Blob => {
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+  
+  const writeString = (offset: number, string: string) => {
+    for (let i = 0; i < string.length; i++) {
+      view.setUint8(offset + i, string.charCodeAt(i));
+    }
+  };
+
+  writeString(0, 'RIFF');
+  view.setUint32(4, 36 + samples.length * 2, true);
+  writeString(8, 'WAVE');
+  writeString(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeString(36, 'data');
+  view.setUint32(40, samples.length * 2, true);
+
+  let offset = 44;
+  for (let i = 0; i < samples.length; i++, offset += 2) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+  }
+
+  return new Blob([view], { type: 'audio/wav' });
+};
+
+const generatePurpleCurve = (blueCurve: number[], targetLen = 300): number[] => {
+  let firstVoiced = -1;
+  let lastVoiced = -1;
+  for (let i = 0; i < blueCurve.length; i++) {
+    if (blueCurve[i] > 0) {
+      if (firstVoiced === -1) firstVoiced = i;
+      lastVoiced = i;
+    }
+  }
+
+  if (firstVoiced === -1) {
+    return new Array(targetLen).fill(0);
+  }
+
+  const voiced = blueCurve.slice(firstVoiced, lastVoiced + 1);
+
+  const interpolated = [...voiced];
+  for (let i = 0; i < interpolated.length; i++) {
+    if (interpolated[i] === 0) {
+      let prevVal = 0;
+      let prevIdx = -1;
+      for (let j = i - 1; j >= 0; j--) {
+        if (interpolated[j] > 0) {
+          prevVal = interpolated[j];
+          prevIdx = j;
+          break;
+        }
+      }
+      let nextVal = 0;
+      let nextIdx = -1;
+      for (let j = i + 1; j < interpolated.length; j++) {
+        if (interpolated[j] > 0) {
+          nextVal = interpolated[j];
+          nextIdx = j;
+          break;
+        }
+      }
+
+      if (prevIdx !== -1 && nextIdx !== -1) {
+        const fraction = (i - prevIdx) / (nextIdx - prevIdx);
+        interpolated[i] = prevVal + fraction * (nextVal - prevVal);
+      } else if (prevIdx !== -1) {
+        interpolated[i] = prevVal;
+      } else if (nextIdx !== -1) {
+        interpolated[i] = nextVal;
+      }
+    }
+  }
+
+  const windowSize = 5;
+  const halfWin = Math.floor(windowSize / 2);
+  const smoothed = new Array(interpolated.length).fill(0);
+  for (let i = 0; i < interpolated.length; i++) {
+    let sum = 0;
+    let count = 0;
+    for (let w = -halfWin; w <= halfWin; w++) {
+      const idx = i + w;
+      if (idx >= 0 && idx < interpolated.length) {
+        sum += interpolated[idx];
+        count++;
+      }
+    }
+    smoothed[i] = count > 0 ? sum / count : interpolated[i];
+  }
+
+  const finalCurve = new Array(targetLen).fill(0);
+  for (let i = 0; i < targetLen; i++) {
+    const origIdx = (i / (targetLen - 1)) * (smoothed.length - 1);
+    const low = Math.floor(origIdx);
+    const high = Math.min(smoothed.length - 1, Math.ceil(origIdx));
+    const fraction = origIdx - low;
+    finalCurve[i] = smoothed[low] * (1 - fraction) + smoothed[high] * fraction;
+  }
+
+  return finalCurve;
+};
