@@ -1,10 +1,9 @@
 // src/lib/aiService.ts
-import { buildMeaningPrompt } from "./prompts/wordMeaningPrompt";
-import { buildReadingExplainPrompt } from "./prompts/readingExplainPrompt";
-import { buildReadingReadPrompt } from "./prompts/readingReadPrompt";
 import { retrievalSelfTestPrompt } from "./prompts/retrievalSelfTestPrompt";
 import { chineseCharacterPrompt } from "./prompts/chineseCharacterPrompt";
 import { SelectedConnection } from "./learning-schema/types";
+
+const SPEECH_API_BASE = (import.meta as any).env.VITE_SPEECH_API_BASE || "http://localhost:8000";
 
 /**
  * Generates a contextual Chinese meaning for a given word within an article.
@@ -14,38 +13,24 @@ import { SelectedConnection } from "./learning-schema/types";
  * @returns A promise that resolves to the contextual Chinese meaning
  */
 export async function generateMeaningFromContext(word: string, articleText: string): Promise<string> {
-  const apiKey = (import.meta as any).env.VITE_OPENAI_API_KEY;
-
-  if (!apiKey || apiKey === 'your_api_key_here') {
-    console.error('❌ OpenAI API Key is missing. Please set VITE_OPENAI_API_KEY in your .env file.');
-    return '（AI 尚未設定）';
-  }
-
-  const prompt = buildMeaningPrompt(word, articleText);
-
   try {
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    const response = await fetch(`${SPEECH_API_BASE}/ai/generate_meaning`, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
+        'Content-Type': 'application/json'
       },
-      body: JSON.stringify({
-        model: 'gpt-4.1-mini',
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.2,
-      })
+      body: JSON.stringify({ word, articleText })
     });
 
     if (!response.ok) {
-      console.error(`❌ OpenAI API Error: ${response.status} ${response.statusText}`);
+      console.error(`❌ Backend AI Meaning Error: ${response.status}`);
       return '（AI 無法取得意思）';
     }
 
     const data = await response.json();
-    return data.choices[0].message.content.trim();
+    return data.meaning || '（AI 無法取得意思）';
   } catch (error) {
-    console.error('❌ Failed to fetch meaning from OpenAI:', error);
+    console.error('❌ Failed to fetch meaning from backend proxy:', error);
     return '（AI 無法取得意思）';
   }
 }
@@ -90,19 +75,12 @@ export async function evaluateRecording(params: {
   targetText: string;
   taskType: "explain" | "read";
 }): Promise<EvaluationFeedback> {
-  const apiKey = (import.meta as any).env.VITE_OPENAI_API_KEY;
-
   const defaultErrorResponse = (suggestion: string): EvaluationFeedback => {
     if (params.taskType === 'explain') {
       return { type: 'comprehension', score: 0, transcriptionText: '', understandingFeedback: '', missingPoints: '', suggestion };
     }
     return { type: 'pronunciation', score: 0, transcriptionText: '', completenessFeedback: '', pronunciationFeedback: '', fluencyFeedback: '', missingOrChangedWords: '', suggestion };
   };
-
-  if (!apiKey || apiKey === 'your_api_key_here') {
-    console.error('❌ OpenAI API Key is missing.');
-    return defaultErrorResponse('AI 尚未設定');
-  }
 
   try {
     // 1. Convert audio to Blob
@@ -122,26 +100,17 @@ export async function evaluateRecording(params: {
     else if (audioBlob.type.includes('aac')) extension = 'aac';
     else if (audioBlob.type.includes('ogg')) extension = 'ogg';
 
-    // 2. Transcribe Audio (Whisper)
+    // 2. Transcribe Audio via backend proxy
     const formData = new FormData();
     formData.append('file', audioBlob, `speech.${extension}`);
-    // Using the exact model requested by user
-    formData.append('model', 'gpt-4o-mini-transcribe');
 
-    const transcribeRes = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+    const transcribeRes = await fetch(`${SPEECH_API_BASE}/ai/transcribe`, {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`
-      },
       body: formData
     });
 
     if (!transcribeRes.ok) {
-      console.error(`❌ OpenAI Transcription Error: ${transcribeRes.status} ${transcribeRes.statusText}`);
-      // Fallback if the user's custom model name fails, try whisper-1
-      if (transcribeRes.status === 404 || transcribeRes.status === 400) {
-        console.warn("Model gpt-4o-mini-transcribe might be invalid. Please consider using 'whisper-1' for transcription.");
-      }
+      console.error(`❌ Backend Transcription Error: ${transcribeRes.status}`);
       return defaultErrorResponse('語音辨識失敗');
     }
 
@@ -154,46 +123,28 @@ export async function evaluateRecording(params: {
       return defaultErrorResponse('請再錄一次，確認麥克風有收音。');
     }
 
-    // 3. AI Evaluation (Chat Completions)
-    let prompt = '';
-    if (params.taskType === 'explain') {
-      prompt = buildReadingExplainPrompt(params.targetText, transcriptionText);
-    } else {
-      prompt = buildReadingReadPrompt(params.targetText, transcriptionText);
-    }
-
-    const payload = {
-      model: 'gpt-4.1-mini', // As requested
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.2,
-    };
-    
-    console.log(`[evaluateRecording] AI evaluation payload:`, JSON.stringify(payload, null, 2));
-
-    const chatRes = await fetch('https://api.openai.com/v1/chat/completions', {
+    // 3. AI Evaluation via backend proxy
+    const chatRes = await fetch(`${SPEECH_API_BASE}/ai/evaluate_text`, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
+        'Content-Type': 'application/json'
       },
-      body: JSON.stringify(payload)
+      body: JSON.stringify({
+        targetText: params.targetText,
+        transcriptionText: transcriptionText,
+        taskType: params.taskType
+      })
     });
 
     if (!chatRes.ok) {
-      console.error(`❌ OpenAI Chat Error: ${chatRes.status} ${chatRes.statusText}`);
+      console.error(`❌ Backend AI Evaluation Error: ${chatRes.status}`);
       return defaultErrorResponse('AI 評估失敗');
     }
 
-    const chatData = await chatRes.json();
-    const content = chatData.choices[0].message.content.trim();
-
-    // Parse JSON safely in case it returns markdown formatting
-    const cleanedJson = content.replace(/```json/g, '').replace(/```/g, '').trim();
-    const result = JSON.parse(cleanedJson);
+    const result = await chatRes.json();
     console.log(`[evaluateRecording] AI evaluation result:`, result);
 
     if (params.taskType === 'explain') {
-      // Calculate average if score is missing
       const completionScore = result.completionScore || 0;
       const accuracyScore = result.accuracyScore || 0;
       const detailScore = result.detailScore || 0;
@@ -309,8 +260,6 @@ export async function evaluateTypedAnswer(params: {
     return { passed: false, feedback: 'AI 評估失敗' };
   }
 }
-
-const SPEECH_API_BASE = (import.meta as any).env.VITE_SPEECH_API_BASE || "http://localhost:8000";
 
 export async function generateConnectionSuggestions(params: {
   word: string;

@@ -1198,3 +1198,240 @@ async def get_connection_suggestions(req: ConnectionSuggestionsRequest):
         print(f"❌ Backend AI connection suggestions error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# =========================
+# 📚 Reading Practice AI Proxy Endpoints
+# =========================
+
+class GenerateMeaningRequest(BaseModel):
+    word: str
+    articleText: str
+
+class EvaluateTextRequest(BaseModel):
+    targetText: str
+    transcriptionText: str
+    taskType: str  # "explain" or "read"
+
+def build_meaning_prompt(word: str, article_text: str) -> str:
+    return f"""
+You are an expert English-to-Traditional-Chinese translator.
+Please explain the precise Traditional Chinese meaning of the target word based strictly on its usage in the provided article context.
+
+Rules:
+1. Return ONLY the short Traditional Chinese meaning.
+2. Do NOT provide long explanations, pronunciation, or example sentences.
+3. Your answer should be brief (e.g., "政府", "說服", "地區的").
+
+Target word: "{word}"
+Article context:
+"{article_text}"
+"""
+
+def build_reading_explain_prompt(target_text: str, transcription_text: str) -> str:
+    return f"""
+你是一個英文閱讀助教，正在聽學生用中文解釋文章。
+
+你的任務是幫學生檢查「理解程度」，不是檢查發音。
+
+請直接對學生說話，全部用「你」，不要說「學生」。
+
+語氣要求：
+- 像老師口語講話
+- 簡短、直接、有用
+- 不要寫分析報告
+- 不要寫「學生怎麼樣」
+
+--------------------------------
+
+請評估以下四個面向（每個都要有分數 + 一句回饋）：
+
+1️⃣ 完整度（有沒有講完整篇）
+2️⃣ 正確度（每句理解是否正確）
+3️⃣ 細節度（有沒有講到關鍵內容）
+4️⃣ 清楚度（表達是否清楚）
+
+--------------------------------
+
+評分原則（重要）：
+
+- 只講一小部分 → 0~40
+- 有抓到大意但不完整 → 40~60
+- 大致正確但少細節 → 60~80
+- 幾乎完整 → 80~100
+
+⚠️ 如果只講一兩句，一定不能給高分
+
+--------------------------------
+
+原文：
+"{target_text}"
+
+學生說的內容：
+"{transcription_text}"
+
+--------------------------------
+
+請回傳「JSON格式」，不能有其他文字：
+
+{{
+  "completionScore": number,
+  "completionFeedback": "一句話",
+
+  "accuracyScore": number,
+  "accuracyFeedback": "一句話",
+
+  "detailScore": number,
+  "detailFeedback": "一句話",
+
+  "clarityScore": number,
+  "clarityFeedback": "一句話",
+
+  "strengths": "你哪裡做得不錯（簡短）",
+  "needsWork": "你哪裡需要改（直接講問題）"
+}}
+"""
+
+def build_reading_read_prompt(target_text: str, transcription_text: str) -> str:
+    escaped_transcription = transcription_text.replace('"', '\\"')
+    return f"""
+You are an English pronunciation coach talking directly to the student.
+All feedback must be in Traditional Chinese, short, conversational, useful, not academic, and not overly descriptive.
+Do NOT use "學生..." in feedback. Use "你..." directly.
+
+Target sentence:
+"{target_text}"
+
+Student said (transcribed):
+"{transcription_text}"
+
+The most important criterion is completeness.
+
+Evaluate in this order:
+1. 完整度：有沒有念完整篇
+2. 正確度：有沒有漏字、跳句、改字
+3. 發音清楚度
+4. 流暢度
+
+Scoring rubric:
+- 90–100: Complete reading, clear pronunciation, smooth fluency
+- 75–89: Mostly complete, minor pronunciation or fluency issues
+- 60–74: Complete or nearly complete, but several pronunciation/fluency issues
+- 40–59: Significant omissions or many unclear parts
+- 0–39: Reads only a small part, skips major sentences, or speech does not match target
+
+Important:
+Completeness is the first priority.
+If the student only reads part of the article, score should usually be below 50 even if pronunciation is good.
+
+Return ONLY JSON. All string values MUST be in Traditional Chinese and speak directly to the student using "你".
+{{
+  "type": "pronunciation",
+  "score": number,
+  "transcriptionText": "{escaped_transcription}",
+  "completenessFeedback": string,
+  "pronunciationFeedback": string,
+  "fluencyFeedback": string,
+  "missingOrChangedWords": string,
+  "suggestion": string
+}}
+"""
+
+@app.post("/ai/generate_meaning")
+async def generate_meaning(req: GenerateMeaningRequest):
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        print("❌ Backend OpenAI API Key is missing.")
+        raise HTTPException(status_code=500, detail="OpenAI API key is missing on the server.")
+
+    prompt = build_meaning_prompt(req.word, req.articleText)
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
+    payload = {
+        "model": "gpt-4o-mini",
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.2
+    }
+    try:
+        print(f"[Backend AI Meaning] Fetching meaning for: {req.word}")
+        res = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload, timeout=30)
+        if res.status_code != 200:
+            print(f"❌ OpenAI API Error: {res.status_code} - {res.text}")
+            raise HTTPException(status_code=res.status_code, detail=f"OpenAI API Error: {res.status_code}")
+        
+        res_data = res.json()
+        content = res_data["choices"][0]["message"]["content"].strip()
+        return {"meaning": content}
+    except Exception as e:
+        print(f"❌ Backend AI generate_meaning error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/ai/transcribe")
+async def transcribe_audio(file: UploadFile = File(...)):
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        print("❌ Backend OpenAI API Key is missing.")
+        raise HTTPException(status_code=500, detail="OpenAI API key is missing on the server.")
+
+    headers = {
+        "Authorization": f"Bearer {api_key}"
+    }
+    try:
+        file_bytes = await file.read()
+        files = {
+            "file": (file.filename, file_bytes, file.content_type)
+        }
+        data = {
+            "model": "whisper-1"
+        }
+        print(f"[Backend AI Transcribe] Transcribing file: {file.filename}, size: {len(file_bytes)} bytes")
+        res = requests.post("https://api.openai.com/v1/audio/transcriptions", headers=headers, files=files, data=data, timeout=30)
+        if res.status_code != 200:
+            print(f"❌ OpenAI Transcription Error: {res.status_code} - {res.text}")
+            raise HTTPException(status_code=res.status_code, detail=f"OpenAI API Error: {res.status_code}")
+        return res.json()
+    except Exception as e:
+        print(f"❌ Backend AI transcribe error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/ai/evaluate_text")
+async def evaluate_text(req: EvaluateTextRequest):
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        print("❌ Backend OpenAI API Key is missing.")
+        raise HTTPException(status_code=500, detail="OpenAI API key is missing on the server.")
+
+    if req.taskType == "explain":
+        prompt = build_reading_explain_prompt(req.targetText, req.transcriptionText)
+    elif req.taskType == "read":
+        prompt = build_reading_read_prompt(req.targetText, req.transcriptionText)
+    else:
+        raise HTTPException(status_code=400, detail="Invalid taskType. Must be 'explain' or 'read'.")
+
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
+    payload = {
+        "model": "gpt-4o-mini",
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.2
+    }
+    try:
+        print(f"[Backend AI Evaluate] Evaluating text length: {len(req.transcriptionText)}, type: {req.taskType}")
+        res = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload, timeout=30)
+        if res.status_code != 200:
+            print(f"❌ OpenAI Evaluation Error: {res.status_code} - {res.text}")
+            raise HTTPException(status_code=res.status_code, detail=f"OpenAI API Error: {res.status_code}")
+        
+        res_data = res.json()
+        content = res_data["choices"][0]["message"]["content"].strip()
+        cleaned_json = content.replace("```json", "").replace("```", "").strip()
+        result = json.loads(cleaned_json)
+        return result
+    except Exception as e:
+        print(f"❌ Backend AI evaluate_text error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
