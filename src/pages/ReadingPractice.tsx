@@ -348,98 +348,48 @@ export default function ReadingPractice() {
       };
 
       recorder.onstop = async () => {
-        // Stop all tracks to release microphone
-        stopTracks();
+        // Stop all tracks to release microphone using the stream instance directly from closure
+        stream.getTracks().forEach(track => track.stop());
 
-        // Wait 150ms to flush final chunks
+        // Safari may trigger onstop before all chunks are pushed. Wait 150ms.
         await new Promise(resolve => setTimeout(resolve, 150));
 
         const finalMimeType = recorder.mimeType || mimeTypeRef.current || 'audio/webm';
+        const blob = chunksRef.current.length > 0 ? new Blob(chunksRef.current, { type: finalMimeType }) : null;
+        const sizeVal = blob ? blob.size : 0;
         const stopTime = recordingStopTimeRef.current > 0 ? recordingStopTimeRef.current : Date.now();
         const durationMs = stopTime - recordingStartTimeRef.current;
 
-        const blob = chunksRef.current.length > 0 ? new Blob(chunksRef.current, { type: finalMimeType }) : new Blob([], { type: finalMimeType });
-        const sizeVal = blob.size;
+        console.log(`[DIAGNOSTICS] ReadingPractice recording stopped. size: ${sizeVal} bytes, duration: ${durationMs}ms`);
 
-        let isValid = true;
-        let metadataDurationSec = 0;
-
-        if (sizeVal < 1000) {
-          isValid = false;
-          console.warn(`[DIAGNOSTICS] ReadingPractice validation failed: size is ${sizeVal} bytes (too small).`);
-        } else if (durationMs < 1000) {
-          isValid = false;
-          console.warn(`[DIAGNOSTICS] ReadingPractice validation failed: duration is ${durationMs}ms (too short).`);
-        } else {
-          console.log(`[DIAGNOSTICS] Starting metadata check in ReadingPractice...`);
-          const validation = await new Promise<{ isValid: boolean; error?: string; duration?: number; isTimeout?: boolean }>((resolve) => {
-            const url = URL.createObjectURL(blob);
-            const audio = new Audio(url);
-            audio.muted = true;
-
-            const cleanup = () => {
-              audio.removeEventListener('loadedmetadata', onLoaded);
-              audio.removeEventListener('error', onError);
-              URL.revokeObjectURL(url);
-            };
-
-            const onLoaded = () => {
-              const dur = audio.duration;
-              cleanup();
-              if (isNaN(dur) || dur <= 0 || dur === Infinity) {
-                resolve({ isValid: false, error: `Invalid duration (${dur}s)`, duration: dur });
-              } else {
-                resolve({ isValid: true, duration: dur });
-              }
-            };
-
-            const onError = () => {
-              cleanup();
-              resolve({ isValid: false, error: `Audio decode error` });
-            };
-
-            audio.addEventListener('loadedmetadata', onLoaded);
-            audio.addEventListener('error', onError);
-            audio.load();
-
-            setTimeout(() => {
-              cleanup();
-              resolve({ isValid: true, duration: 0, isTimeout: true });
-            }, 1500);
+        if (blob) {
+          // Proceed to update local URLs immediately to allow student to continue
+          const url = URL.createObjectURL(blob);
+          setAudioUrls((prev) => {
+            const oldUrl = prev[taskKey];
+            if (oldUrl) URL.revokeObjectURL(oldUrl);
+            return { ...prev, [taskKey]: url };
           });
 
-          if (!validation.isValid) {
-            isValid = false;
-            console.warn(`[DIAGNOSTICS] ReadingPractice metadata validation failed: ${validation.error}`);
-          } else {
-            metadataDurationSec = validation.duration || 0;
+          if (item?.articleText) {
+            setIsAiEvaluating(prev => ({ ...prev, [taskKey]: true }));
+            try {
+              // Pass the raw blob directly to avoid iOS fetch(blobUrl) sandbox limits
+              const feedback = await evaluateRecording({
+                audioBlobOrBase64: blob,
+                targetText: item.articleText,
+                taskType: (taskKey === 'first_explanation' || taskKey === 'final_explanation') ? 'explain' : 'read'
+              });
+              setAiFeedback(prev => ({ ...prev, [taskKey]: feedback }));
+            } catch (err) {
+              console.error('AI evaluation failed:', err);
+            } finally {
+              setIsAiEvaluating(prev => ({ ...prev, [taskKey]: false }));
+            }
           }
-        }
-
-        console.log(`[DIAGNOSTICS-SUMMARY] uploadBlocked=false | mimeType="${finalMimeType}" | blobSize=${sizeVal} | durationMs=${durationMs} | metadataDurationSec=${metadataDurationSec} | isValid=${isValid}`);
-
-        // Proceed to upload and evaluation
-        const url = URL.createObjectURL(blob);
-        setAudioUrls((prev) => {
-          const oldUrl = prev[taskKey];
-          if (oldUrl) URL.revokeObjectURL(oldUrl);
-          return { ...prev, [taskKey]: url };
-        });
-
-        if (item?.articleText) {
-          setIsAiEvaluating(prev => ({ ...prev, [taskKey]: true }));
-          try {
-            const feedback = await evaluateRecording({
-              audioBlobOrBase64: url,
-              targetText: item.articleText,
-              taskType: (taskKey === 'first_explanation' || taskKey === 'final_explanation') ? 'explain' : 'read'
-            });
-            setAiFeedback(prev => ({ ...prev, [taskKey]: feedback }));
-          } catch (err) {
-            console.error('AI evaluation failed:', err);
-          } finally {
-            setIsAiEvaluating(prev => ({ ...prev, [taskKey]: false }));
-          }
+        } else {
+          console.error(`❌ [DIAGNOSTICS] ReadingPractice validation failed: blob is null.`);
+          setRecordingError("Recording failed. Please record again.");
         }
       };
 
