@@ -1,3 +1,9 @@
+/**
+ * @deprecated
+ * This prompt file is DEPRECATED.
+ * The single source of truth for reading explain/comprehension evaluation prompts is now managed in the backend:
+ * backend/main.py -> build_reading_explain_prompt()
+ */
 export function buildReadingExplainPrompt(targetText: string, transcriptionText: string): string {
   return `
 你是一個英文閱讀助教，正在聽學生用中文解釋文章。

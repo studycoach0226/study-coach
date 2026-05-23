@@ -1,3 +1,9 @@
+/**
+ * @deprecated
+ * This prompt file is DEPRECATED.
+ * The single source of truth for reading pronunciation evaluation prompts is now managed in the backend:
+ * backend/main.py -> build_reading_read_prompt()
+ */
 export function buildReadingReadPrompt(targetText: string, transcriptionText: string): string {
   return `
 You are an English pronunciation coach talking directly to the student.

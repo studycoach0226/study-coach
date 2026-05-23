@@ -13,6 +13,8 @@ const SPEECH_API_BASE = (import.meta as any).env.VITE_SPEECH_API_BASE || "http:/
  * @returns A promise that resolves to the contextual Chinese meaning
  */
 export async function generateMeaningFromContext(word: string, articleText: string): Promise<string> {
+  // Note: The prompt template for word translation lives in the backend:
+  // backend/main.py -> build_meaning_prompt()
   try {
     const response = await fetch(`${SPEECH_API_BASE}/ai/generate_meaning`, {
       method: 'POST',
@@ -52,6 +54,17 @@ export type ComprehensionFeedback = {
   understandingFeedback?: string;
   missingPoints?: string;
   suggestion?: string;
+  // New backend proxy fields
+  student_transcript?: string;
+  reference_answer_zh?: string;
+  score_details?: {
+    completeness: number;
+    accuracy: number;
+    detail: number;
+    clarity: number;
+  };
+  suggestions?: string;
+  missing_or_changed_content?: string;
 };
 
 export type PronunciationFeedback = {
@@ -124,6 +137,8 @@ export async function evaluateRecording(params: {
     }
 
     // 3. AI Evaluation via backend proxy
+    // Note: The prompt templates for reading evaluation live in the backend:
+    // backend/main.py -> build_reading_explain_prompt() and build_reading_read_prompt()
     const chatRes = await fetch(`${SPEECH_API_BASE}/ai/evaluate_text`, {
       method: 'POST',
       headers: {
@@ -145,10 +160,10 @@ export async function evaluateRecording(params: {
     console.log(`[evaluateRecording] AI evaluation result:`, result);
 
     if (params.taskType === 'explain') {
-      const completionScore = result.completionScore || 0;
-      const accuracyScore = result.accuracyScore || 0;
-      const detailScore = result.detailScore || 0;
-      const clarityScore = result.clarityScore || 0;
+      const completionScore = result.score_details?.completeness ?? result.completionScore ?? 0;
+      const accuracyScore = result.score_details?.accuracy ?? result.accuracyScore ?? 0;
+      const detailScore = result.score_details?.detail ?? result.detailScore ?? 0;
+      const clarityScore = result.score_details?.clarity ?? result.clarityScore ?? 0;
       
       const calculatedScore = Math.round((completionScore + accuracyScore + detailScore + clarityScore) / 4);
       
@@ -172,6 +187,12 @@ export async function evaluateRecording(params: {
         clarityFeedback: result.clarityFeedback,
         strengths: result.strengths,
         needsWork: result.needsWork,
+        // Add new proxy fields
+        student_transcript: result.student_transcript || transcriptionText,
+        reference_answer_zh: result.reference_answer_zh,
+        score_details: result.score_details,
+        suggestions: result.suggestions,
+        missing_or_changed_content: result.missing_or_changed_content,
       };
     } else {
       return {

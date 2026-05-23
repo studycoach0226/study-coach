@@ -1228,68 +1228,57 @@ Article context:
 """
 
 def build_reading_explain_prompt(target_text: str, transcription_text: str) -> str:
+    escaped_target = target_text.replace('"', '\\"')
+    escaped_transcription = transcription_text.replace('"', '\\"')
     return f"""
 你是一個英文閱讀助教，正在聽學生用中文解釋文章。
 
-你的任務是幫學生檢查「理解程度」，不是檢查發音。
+你的任務是幫學生檢查「理解程度」，並提供精準的參考答案與詳細評估。
 
 請直接對學生說話，全部用「你」，不要說「學生」。
 
-語氣要求：
-- 像老師口語講話
-- 簡短、直接、有用
-- 不要寫分析報告
-- 不要寫「學生怎麼樣」
-
 --------------------------------
 
-請評估以下四個面向（每個都要有分數 + 一句回饋）：
-
-1️⃣ 完整度（有沒有講完整篇）
-2️⃣ 正確度（每句理解是否正確）
-3️⃣ 細節度（有沒有講到關鍵內容）
-4️⃣ 清楚度（表達是否清楚）
-
---------------------------------
-
-評分原則（重要）：
-
-- 只講一小部分 → 0~40
-- 有抓到大意但不完整 → 40~60
-- 大致正確但少細節 → 60~80
-- 幾乎完整 → 80~100
-
-⚠️ 如果只講一兩句，一定不能給高分
+評估要求與步驟：
+1. 針對原文（英文文章），提供一份精準、自然、符合語境的繁體中文對照參考答案（即整篇文章的中文翻譯），放入 "reference_answer_zh" 欄位中。這個參考答案必須完全基於英文原文，不能受學生說的內容影響。
+2. 比對學生的中文解釋內容與英文原文，評估學生的理解程度。
+3. 評估以下四個面向（分數範圍 0-100）：
+   - 完整度 (completeness): 有沒有講完整篇
+   - 正確度 (accuracy): 每句理解是否正確
+   - 細節度 (detail): 有沒有講到關鍵內容
+   - 清楚度 (clarity): 表達是否清楚
+4. 計算四個分數的平均值作為總分 "score" (0-100)。
+5. 提供優點（"strengths"）與具體改進建議（"suggestions"）。
+6. 指出學生漏掉或理解錯誤的關鍵內容（"missing_or_changed_content"）。
 
 --------------------------------
 
 原文：
-"{target_text}"
+"{escaped_target}"
 
 學生說的內容：
-"{transcription_text}"
+"{escaped_transcription}"
 
 --------------------------------
 
-請回傳「JSON格式」，不能有其他文字：
+請嚴格回傳「JSON格式」，不要有任何 Markdown 標記或說明文字：
 
 {{
-  "completionScore": number,
-  "completionFeedback": "一句話",
-
-  "accuracyScore": number,
-  "accuracyFeedback": "一句話",
-
-  "detailScore": number,
-  "detailFeedback": "一句話",
-
-  "clarityScore": number,
-  "clarityFeedback": "一句話",
-
-  "strengths": "你哪裡做得不錯（簡短）",
-  "needsWork": "你哪裡需要改（直接講問題）"
+  "student_transcript": "{escaped_transcription}",
+  "reference_answer_zh": "整篇英文文章的繁體中文精準對照翻譯",
+  "score": 85,
+  "score_details": {{
+    "completeness": 80,
+    "accuracy": 90,
+    "detail": 85,
+    "clarity": 85
+  }},
+  "strengths": "你做得好的地方（簡短）",
+  "suggestions": "具體改進建議（直接對學生說，用『你』）",
+  "missing_or_changed_content": "你漏掉或講錯的關鍵點（簡短，如果沒有則寫『無』）"
 }}
 """
+
 
 def build_reading_read_prompt(target_text: str, transcription_text: str) -> str:
     escaped_transcription = transcription_text.replace('"', '\\"')

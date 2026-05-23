@@ -72,6 +72,9 @@ export default function ReadingPractice() {
   const [isAiLoading, setIsAiLoading] = useState<Record<string, boolean>>({});
   const fetchingAiRef = useRef<Set<string>>(new Set());
 
+  const [playbackRate, setPlaybackRate] = useState<number>(1);
+  const [selectedPassageWord, setSelectedPassageWord] = useState<string | null>(null);
+
   const [isRecording, setIsRecording] = useState(false);
   const [recordingError, setRecordingError] = useState('');
 
@@ -265,7 +268,7 @@ export default function ReadingPractice() {
 
     const utterance = new SpeechSynthesisUtterance(content);
     utterance.lang = 'en-US';
-    utterance.rate = 0.95;
+    utterance.rate = text ? 0.9 : playbackRate;
     utterance.pitch = 1;
 
     const voices = window.speechSynthesis.getVoices();
@@ -789,6 +792,43 @@ export default function ReadingPractice() {
             return <span key={idx}>{token}</span>;
           }
 
+          const word = normalizeWord(token);
+          const isFullPassageInteractive = isFixLearn && fixLearnStep === 2;
+
+          if (isFullPassageInteractive) {
+            const isSelected = selectedPassageWord === word;
+            return (
+              <span
+                key={idx}
+                onClick={() => {
+                  setSelectedPassageWord(word);
+                  if (!wordSupportMap[word] && !aiMeanings[word] && !fetchingAiRef.current.has(word)) {
+                    fetchingAiRef.current.add(word);
+                    fetchAiMeaning(word);
+                  }
+                }}
+                style={{
+                  cursor: 'pointer',
+                  borderRadius: '4px',
+                  padding: '0 2px',
+                  backgroundColor: isSelected ? '#fed7aa' : 'transparent',
+                  textDecoration: 'underline',
+                  textDecorationStyle: 'dashed',
+                  textDecorationColor: '#cbd5e1',
+                  transition: 'all 0.2s ease',
+                }}
+                onMouseEnter={(e) => {
+                  if (!isSelected) e.currentTarget.style.backgroundColor = '#ffedd5';
+                }}
+                onMouseLeave={(e) => {
+                  if (!isSelected) e.currentTarget.style.backgroundColor = 'transparent';
+                }}
+              >
+                {token}
+              </span>
+            );
+          }
+
           const marked = !!getMarkedWord(token, getHighlightSource());
 
           return (
@@ -868,89 +908,95 @@ export default function ReadingPractice() {
         )}
 
         {aiFeedback[taskKey] && !isAiEvaluating[taskKey] && (
-          <div style={{ marginTop: '0.75rem', padding: '1rem', background: '#f0fdf4', borderRadius: '8px', border: '1px solid #bbf7d0' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
-              <span style={{ fontSize: '1.25rem' }}>🎯</span>
-              <span style={{ fontWeight: 700, fontSize: '1.1rem', color: '#16a34a' }}>
-                {isExplainTask ? 'Understanding Score' : 'Reading Score'}: {aiFeedback[taskKey]?.score} / 100
-              </span>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.5rem' }}>
+          <div style={{ marginTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            {isExplainTask ? (
+              (() => {
+                const fb = aiFeedback[taskKey] as ComprehensionFeedback;
+                return (
+                  <>
+                    {/* 1. 你說的內容 */}
+                    <div style={{ padding: '0.75rem', background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                      <strong style={{ color: '#475569', display: 'block', marginBottom: '0.35rem' }}>🎤 你說的內容：</strong>
+                      <div style={{ color: '#1e293b', fontSize: '1rem', fontStyle: 'italic', lineHeight: '1.5' }}>
+                        "{fb.student_transcript || fb.transcriptionText || '（無內容）'}"
+                      </div>
+                    </div>
 
-              <div style={{ padding: '0.5rem', background: '#f8fafc', borderRadius: '6px', border: '1px solid #e2e8f0', marginBottom: '0.25rem' }}>
-                <strong style={{ color: '#475569' }}>🎤 你說的內容：</strong>
-                <div style={{ color: '#64748b', fontSize: '0.95rem', marginTop: '0.25rem', fontStyle: 'italic' }}>
-                  "{aiFeedback[taskKey]?.transcriptionText}"
+                    {/* 2. 參考答案 */}
+                    <div style={{ padding: '0.75rem', background: '#fffbeb', borderRadius: '8px', border: '1px solid #fef3c7' }}>
+                      <strong style={{ color: '#b45309', display: 'block', marginBottom: '0.35rem' }}>📖 參考答案 (文章翻譯)：</strong>
+                      <div style={{ color: '#78350f', fontSize: '1.05rem', lineHeight: '1.6', whiteSpace: 'pre-wrap' }}>
+                        {fb.reference_answer_zh || '（無參考對照答案）'}
+                      </div>
+                    </div>
+
+                    {/* 3. 分數與回饋 */}
+                    <div style={{ padding: '1rem', background: '#f0fdf4', borderRadius: '8px', border: '1px solid #bbf7d0' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                        <span style={{ fontSize: '1.25rem' }}>🎯</span>
+                        <span style={{ fontWeight: 700, fontSize: '1.15rem', color: '#16a34a' }}>
+                          Understanding Score: {fb.score} / 100
+                        </span>
+                      </div>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                        {/* 評分細項 */}
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '0.5rem', background: '#ffffff', padding: '0.75rem', borderRadius: '6px', border: '1px solid #dcfce7' }}>
+                          <div><strong style={{ color: '#15803d' }}>完整度：</strong>{fb.score_details?.completeness ?? fb.completionScore ?? 0} / 100</div>
+                          <div><strong style={{ color: '#15803d' }}>正確度：</strong>{fb.score_details?.accuracy ?? fb.accuracyScore ?? 0} / 100</div>
+                          <div><strong style={{ color: '#15803d' }}>細節度：</strong>{fb.score_details?.detail ?? fb.detailScore ?? 0} / 100</div>
+                          <div><strong style={{ color: '#15803d' }}>清楚度：</strong>{fb.score_details?.clarity ?? fb.clarityScore ?? 0} / 100</div>
+                        </div>
+
+                        {/* 優點 */}
+                        <div>
+                          <strong style={{ color: '#15803d' }}>你做得好的地方：</strong>
+                          <div style={{ color: 'var(--text-main)', marginTop: '0.15rem' }}>{fb.strengths || '無'}</div>
+                        </div>
+
+                        {/* 漏掉或講錯的關鍵點 */}
+                        <div>
+                          <strong style={{ color: '#b91c1c' }}>漏掉或講錯的關鍵點：</strong>
+                          <div style={{ color: 'var(--text-main)', marginTop: '0.15rem' }}>{fb.missing_or_changed_content || '無'}</div>
+                        </div>
+
+                        {/* 具體改進建議 */}
+                        <div style={{ padding: '0.6rem 0.75rem', background: '#fff', borderRadius: '6px', border: '1px solid #bbf7d0' }}>
+                          <strong style={{ color: '#047857' }}>💡 具體改進建議：</strong>
+                          <div style={{ color: 'var(--text-main)', marginTop: '0.15rem' }}>{fb.suggestions || fb.needsWork || fb.suggestion || '無'}</div>
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                );
+              })()
+            ) : (
+              // Original Pronunciation Feedback display (Read step)
+              <div style={{ padding: '1rem', background: '#f0fdf4', borderRadius: '8px', border: '1px solid #bbf7d0', width: '100%' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
+                  <span style={{ fontSize: '1.25rem' }}>🎯</span>
+                  <span style={{ fontWeight: 700, fontSize: '1.1rem', color: '#16a34a' }}>
+                    Reading Score: {aiFeedback[taskKey]?.score} / 100
+                  </span>
                 </div>
-              </div>
-
-              {isExplainTask ? (
-                <>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', padding: '0.75rem', background: '#f0fdf4', borderRadius: '6px', border: '1px solid #bbf7d0' }}>
-                    <div style={{ fontWeight: 600, color: '#166534', marginBottom: '0.1rem' }}>評分細項：</div>
-
-                    {((aiFeedback[taskKey] as ComprehensionFeedback).completionScore !== undefined || (aiFeedback[taskKey] as ComprehensionFeedback).completionFeedback) && (
-                      <div style={{ fontSize: '0.95rem' }}>
-                        <strong style={{ color: '#15803d' }}>
-                          完整度：{(aiFeedback[taskKey] as ComprehensionFeedback).completionScore !== undefined ? `${(aiFeedback[taskKey] as ComprehensionFeedback).completionScore} / 100` : ""}
-                        </strong>
-                        <div style={{ color: 'var(--text-main)', marginLeft: '0.25rem', marginTop: '0.15rem' }}>
-                          → {(aiFeedback[taskKey] as ComprehensionFeedback).completionFeedback || "教練還沒有產生這一項回饋"}
-                        </div>
-                      </div>
-                    )}
-
-                    {((aiFeedback[taskKey] as ComprehensionFeedback).accuracyScore !== undefined || (aiFeedback[taskKey] as ComprehensionFeedback).accuracyFeedback) && (
-                      <div style={{ fontSize: '0.95rem' }}>
-                        <strong style={{ color: '#15803d' }}>
-                          正確度：{(aiFeedback[taskKey] as ComprehensionFeedback).accuracyScore !== undefined ? `${(aiFeedback[taskKey] as ComprehensionFeedback).accuracyScore} / 100` : ""}
-                        </strong>
-                        <div style={{ color: 'var(--text-main)', marginLeft: '0.25rem', marginTop: '0.15rem' }}>
-                          → {(aiFeedback[taskKey] as ComprehensionFeedback).accuracyFeedback || "教練還沒有產生這一項回饋"}
-                        </div>
-                      </div>
-                    )}
-
-                    {((aiFeedback[taskKey] as ComprehensionFeedback).detailScore !== undefined || (aiFeedback[taskKey] as ComprehensionFeedback).detailFeedback) && (
-                      <div style={{ fontSize: '0.95rem' }}>
-                        <strong style={{ color: '#15803d' }}>
-                          細節度：{(aiFeedback[taskKey] as ComprehensionFeedback).detailScore !== undefined ? `${(aiFeedback[taskKey] as ComprehensionFeedback).detailScore} / 100` : ""}
-                        </strong>
-                        <div style={{ color: 'var(--text-main)', marginLeft: '0.25rem', marginTop: '0.15rem' }}>
-                          → {(aiFeedback[taskKey] as ComprehensionFeedback).detailFeedback || "教練還沒有產生這一項回饋"}
-                        </div>
-                      </div>
-                    )}
-
-                    {((aiFeedback[taskKey] as ComprehensionFeedback).clarityScore !== undefined || (aiFeedback[taskKey] as ComprehensionFeedback).clarityFeedback) && (
-                      <div style={{ fontSize: '0.95rem' }}>
-                        <strong style={{ color: '#15803d' }}>
-                          清楚度：{(aiFeedback[taskKey] as ComprehensionFeedback).clarityScore !== undefined ? `${(aiFeedback[taskKey] as ComprehensionFeedback).clarityScore} / 100` : ""}
-                        </strong>
-                        <div style={{ color: 'var(--text-main)', marginLeft: '0.25rem', marginTop: '0.15rem' }}>
-                          → {(aiFeedback[taskKey] as ComprehensionFeedback).clarityFeedback || "教練還沒有產生這一項回饋"}
-                        </div>
-                      </div>
-                    )}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.5rem' }}>
+                  <div style={{ padding: '0.5rem', background: '#f8fafc', borderRadius: '6px', border: '1px solid #e2e8f0', marginBottom: '0.25rem' }}>
+                    <strong style={{ color: '#475569' }}>🎤 你說的內容：</strong>
+                    <div style={{ color: '#64748b', fontSize: '0.95rem', marginTop: '0.25rem', fontStyle: 'italic' }}>
+                      "{aiFeedback[taskKey]?.transcriptionText}"
+                    </div>
                   </div>
-                  <div><strong style={{ color: '#15803d' }}>你做得好的地方：</strong> <span style={{ color: 'var(--text-main)' }}>{(aiFeedback[taskKey] as ComprehensionFeedback).strengths || "教練還沒有產生這一項回饋"}</span></div>
-                  <div><strong style={{ color: '#15803d' }}>還可以補強的地方：</strong> <span style={{ color: 'var(--text-main)' }}>{(aiFeedback[taskKey] as ComprehensionFeedback).needsWork || "教練還沒有產生這一項回饋"}</span></div>
-                </>
-              ) : (
-                <>
                   <div><strong style={{ color: '#15803d' }}>完整度回饋:</strong> <span style={{ color: 'var(--text-main)' }}>{(aiFeedback[taskKey] as PronunciationFeedback).completenessFeedback}</span></div>
                   <div><strong style={{ color: '#15803d' }}>發音回饋:</strong> <span style={{ color: 'var(--text-main)' }}>{(aiFeedback[taskKey] as PronunciationFeedback).pronunciationFeedback}</span></div>
                   <div><strong style={{ color: '#15803d' }}>流暢度回饋:</strong> <span style={{ color: 'var(--text-main)' }}>{(aiFeedback[taskKey] as PronunciationFeedback).fluencyFeedback}</span></div>
                   <div><strong style={{ color: '#15803d' }}>漏念或改動的內容:</strong> <span style={{ color: 'var(--text-main)' }}>{(aiFeedback[taskKey] as PronunciationFeedback).missingOrChangedWords}</span></div>
-                </>
-              )}
-
-              {!isExplainTask && (
-                <div style={{ padding: '0.5rem', background: '#fff', borderRadius: '6px', border: '1px solid #bbf7d0', marginTop: '0.25rem' }}>
-                  <strong style={{ color: '#047857' }}>💡 下一步可以這樣做：</strong> <span style={{ color: 'var(--text-main)' }}>{aiFeedback[taskKey]?.suggestion || "教練還沒有產生這一項回饋"}</span>
+                  
+                  <div style={{ padding: '0.5rem', background: '#fff', borderRadius: '6px', border: '1px solid #bbf7d0', marginTop: '0.25rem' }}>
+                    <strong style={{ color: '#047857' }}>💡 下一步可以這樣做：</strong> <span style={{ color: 'var(--text-main)' }}>{aiFeedback[taskKey]?.suggestion || "教練還沒有產生這一項回饋"}</span>
+                  </div>
                 </div>
-              )}
-            </div>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -1169,6 +1215,57 @@ export default function ReadingPractice() {
       <>
         {renderPassageCard()}
 
+        {selectedPassageWord && (
+          <div
+            className="card"
+            style={{
+              padding: '1.25rem',
+              border: '1px solid #fed7aa',
+              background: '#fff7ed',
+              marginBottom: '1rem',
+              borderRadius: '12px',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
+              <div>
+                <span style={{ fontSize: '0.85rem', color: '#ea580c', fontWeight: 600, display: 'block', marginBottom: '0.25rem' }}>
+                  📌 Selected Word Details
+                </span>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: '1rem', flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: '1.4rem', fontWeight: 700, color: '#c2410c' }}>{selectedPassageWord}</span>
+                  <span style={{ color: '#475569', fontSize: '1rem' }}>
+                    {wordSupportMap[selectedPassageWord] ? (
+                      `中文：${wordSupportMap[selectedPassageWord].zh}`
+                    ) : isAiLoading[selectedPassageWord] ? (
+                      '🤖 AI 正在預測意思...'
+                    ) : aiMeanings[selectedPassageWord] ? (
+                      `中文：${aiMeanings[selectedPassageWord]}`
+                    ) : (
+                      '無中文意思對照'
+                    )}
+                  </span>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button
+                  className="btn btn-outline"
+                  onClick={() => handlePlayReferenceAudio(selectedPassageWord)}
+                  style={{ borderColor: '#ea580c', color: '#ea580c' }}
+                >
+                  🔊 Play Word
+                </button>
+                <button
+                  className="btn btn-outline"
+                  onClick={() => setSelectedPassageWord(null)}
+                  style={{ borderColor: '#cbd5e1', color: '#64748b' }}
+                >
+                  ✕ Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div
           className="card"
           style={{
@@ -1217,6 +1314,39 @@ export default function ReadingPractice() {
             >
               ⏹ Stop
             </button>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '1rem' }}>
+            <span style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-muted)' }}>Audio Speed:</span>
+            {[0.75, 1.0, 1.25].map((rate) => {
+              const isSelected = playbackRate === rate;
+              return (
+                <button
+                  key={rate}
+                  className="btn"
+                  style={{
+                    padding: '0.25rem 0.65rem',
+                    fontSize: '0.9rem',
+                    borderRadius: '6px',
+                    backgroundColor: isSelected ? 'var(--primary)' : 'transparent',
+                    color: isSelected ? '#fff' : 'var(--text-main)',
+                    border: '1px solid var(--border)',
+                    cursor: 'pointer'
+                  }}
+                  onClick={() => {
+                    setPlaybackRate(rate);
+                    if (isSpeaking && !isPaused) {
+                      // Restart speech with the new rate
+                      setTimeout(() => {
+                        handlePlayReferenceAudio();
+                      }, 50);
+                    }
+                  }}
+                >
+                  {rate}x
+                </button>
+              );
+            })}
           </div>
         </div>
 

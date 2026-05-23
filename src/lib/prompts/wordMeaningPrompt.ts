@@ -1,3 +1,9 @@
+/**
+ * @deprecated
+ * This prompt file is DEPRECATED.
+ * The single source of truth for word meaning translation prompts is now managed in the backend:
+ * backend/main.py -> build_meaning_prompt()
+ */
 export function buildMeaningPrompt(word: string, articleText: string): string {
   return `
 You are an expert English-to-Traditional-Chinese translator.
@@ -13,3 +19,4 @@ Article context:
 "${articleText}"
 `;
 }
+
