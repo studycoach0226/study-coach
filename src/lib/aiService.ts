@@ -311,6 +311,8 @@ export async function evaluateTypedAnswer(params: {
   }
 }
 
+const SPEECH_API_BASE = (import.meta as any).env.VITE_SPEECH_API_BASE || "http://localhost:8000";
+
 export async function generateConnectionSuggestions(params: {
   word: string;
   learningLanguage: string;
@@ -319,47 +321,33 @@ export async function generateConnectionSuggestions(params: {
   sentence: string;
   knownWords: string[];
 }): Promise<Omit<SelectedConnection, 'id' | 'source' | 'createdAt' | 'updatedAt' | 'studentComment'>[]> {
-  const apiKey = (import.meta as any).env.VITE_OPENAI_API_KEY;
-
-  if (!apiKey || apiKey === 'your_api_key_here') {
-    console.error('❌ OpenAI API Key is missing.');
-    return [];
-  }
-
-  const prompt = connectionSuggestionsPrompt.generate(params);
+  console.log(`[AI Suggestions] Triggered request via backend proxy for word: "${params.word}"`);
 
   try {
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    const response = await fetch(`${SPEECH_API_BASE}/ai/connection_suggestions`, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
+        'Content-Type': 'application/json'
       },
-      body: JSON.stringify({
-        model: 'gpt-4.1-mini',
-        messages: [
-          { role: 'system', content: connectionSuggestionsPrompt.system },
-          { role: 'user', content: prompt }
-        ],
-        temperature: 0.7,
-      })
+      body: JSON.stringify(params)
     });
 
+    console.log(`[AI Suggestions] Response status from proxy: ${response.status} ${response.statusText}`);
+
     if (!response.ok) {
-      console.error(`❌ OpenAI Chat Error: ${response.status}`);
+      let errorBody = '';
+      try {
+        errorBody = await response.text();
+      } catch (e) {
+        errorBody = '(could not parse error body)';
+      }
+      console.error(`❌ Backend AI Suggestions Error: ${response.status} - Body: ${errorBody}`);
       return [];
     }
 
-    const data = await response.json();
-    const content = data.choices[0].message.content.trim();
-    const cleanedJson = content.replace(/```json/g, '').replace(/```/g, '').trim();
-    const result = JSON.parse(cleanedJson);
-    
-    // Support both { suggestions: [] } and [] formats
-    if (Array.isArray(result)) return result;
-    if (result.suggestions && Array.isArray(result.suggestions)) return result.suggestions;
-    
-    return [];
+    const result = await response.json();
+    console.log(`[AI Suggestions] Successful. Parsed suggestions count: ${result.length}`);
+    return result;
   } catch (error) {
     console.error('❌ AI Connection Suggestions Error:', error);
     return [];

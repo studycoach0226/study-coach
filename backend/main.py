@@ -1074,14 +1074,127 @@ async def convert_to_mp3(file: UploadFile = File(...)):
         }
     )
 
-    mp3_buffer.seek(0)
+# =========================
+# 🤖 AI Connection Suggestions Proxy
+# =========================
 
-    # 回傳 mp3
-    return StreamingResponse(
-        mp3_buffer,
-        media_type="audio/mpeg",
-        headers={
-            "Content-Disposition":
-            "attachment; filename=recording.mp3"
-        }
+class ConnectionSuggestionsRequest(BaseModel):
+    word: str
+    learningLanguage: str
+    nativeLanguage: str
+    chunk: str
+    sentence: str
+    knownWords: List[str]
+
+SYSTEM_PROMPT = """You are a helpful language teacher providing concise memory connection notes for a student.
+Your goal is to help the student connect the new word to sounds, shapes, meanings, usage, and words they already know.
+
+STYLE GUIDELINES:
+- Write short, clear, teacher-style memory notes.
+- Use a step-by-step or breakdown style when useful.
+- Use arrows (→), equals (=), plus (+), and colons (:) for clarity.
+- Avoid long essay-like explanations.
+- Each note can be 1-4 short lines.
+- For English learners (Chinese speakers): Include Chinese support for roots/prefixes.
+- For Chinese learners (English speakers): Always include pinyin and English meaning.
+
+EXAMPLES:
+1. English word "decide":
+   de- = away / down (離開、往下)
+   -cide = cut (切)
+   decide = cut away other choices → make one choice
+   中文記憶：把其他選項切掉，只留下一個決定。
+
+2. Chinese word "中文":
+   zhōng wén = Chinese language
+   中 zhōng = middle
+   文 wén = language / writing
+
+JSON STRUCTURE:
+Return an array of objects with:
+- type (category name)
+- relationshipTag (short label: meaning, sound, character, collocation, usage, root, shape)
+- noteLine (the clear teacher-style note, can contain newlines if needed for multi-line notes)
+- explanation (secondary brief context for understanding)
+- optionalPronunciation (pinyin or IPA)
+- optionalMeaning (English translation)
+
+Return JSON only, no markdown."""
+
+def generate_user_prompt(word, learning_language, native_language, chunk, sentence, known_words):
+    known_str = ", ".join(known_words)
+    return f"""
+Target word: {word}
+Learning language: {learning_language}
+Student native language: {native_language}
+Chunk / phrase: {chunk}
+Full sentence / context: {sentence}
+Known words student knows: {known_str}
+
+Generate 4-6 high-quality, concise suggestions. Priority: Character breakdown/Roots, then Sound and Usage.
+"""
+
+@app.post("/ai/connection_suggestions")
+async def get_connection_suggestions(req: ConnectionSuggestionsRequest):
+    api_key = os.getenv("OPENAI_API_KEY")
+
+    if not api_key:
+        print("❌ Backend OpenAI API Key is missing.")
+        raise HTTPException(status_code=500, detail="OpenAI API key is missing on the server.")
+
+    user_content = generate_user_prompt(
+        req.word,
+        req.learningLanguage,
+        req.nativeLanguage,
+        req.chunk,
+        req.sentence,
+        req.knownWords
     )
+
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
+
+    payload = {
+        "model": "gpt-4o-mini",
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_content}
+        ],
+        "temperature": 0.7
+    }
+
+    try:
+        print(f"[Backend AI Suggestions] Sending request to OpenAI for word: {req.word}")
+        response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload, timeout=30)
+        
+        print(f"[Backend AI Suggestions] OpenAI response status: {response.status_code}")
+        
+        if response.status_code != 200:
+            print(f"❌ OpenAI API Error: {response.status_code} - {response.text}")
+            raise HTTPException(status_code=500, detail=f"OpenAI API Error: {response.status_code}")
+
+        res_data = response.json()
+        content = res_data["choices"][0]["message"]["content"].strip()
+        
+        # Clean any markdown json wrapper
+        cleaned_json = content.replace("```json", "").replace("```", "").strip()
+        result = json.loads(cleaned_json)
+        
+        # Format mapping compatibility
+        suggestions = []
+        if isinstance(result, list):
+            suggestions = result
+        elif isinstance(result, dict) and "suggestions" in result and isinstance(result["suggestions"], list):
+            suggestions = result["suggestions"]
+            
+        print(f"[Backend AI Suggestions] Success. Suggestions count: {len(suggestions)}")
+        return suggestions
+    except json.JSONDecodeError as je:
+        print(f"❌ Failed to parse JSON from OpenAI response: {je}")
+        raise HTTPException(status_code=500, detail="Failed to parse suggestions response from AI.")
+    except Exception as e:
+        print(f"❌ Backend AI connection suggestions error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
