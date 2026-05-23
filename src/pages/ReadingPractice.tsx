@@ -358,24 +358,18 @@ export default function ReadingPractice() {
         const stopTime = recordingStopTimeRef.current > 0 ? recordingStopTimeRef.current : Date.now();
         const durationMs = stopTime - recordingStartTimeRef.current;
 
-        const blob = chunksRef.current.length > 0 ? new Blob(chunksRef.current, { type: finalMimeType }) : null;
+        const blob = chunksRef.current.length > 0 ? new Blob(chunksRef.current, { type: finalMimeType }) : new Blob([], { type: finalMimeType });
+        const sizeVal = blob.size;
 
         let isValid = true;
-        let validationMsg = "";
         let metadataDurationSec = 0;
 
-        if (!blob) {
+        if (sizeVal < 1000) {
           isValid = false;
-          validationMsg = "Recording failed or was too short. Please record again.";
-          console.error(`❌ [DIAGNOSTICS] ReadingPractice validation failed: blob is null.`);
-        } else if (blob.size < 1000) {
-          isValid = false;
-          validationMsg = "Recording failed or was too short. Please record again.";
-          console.error(`❌ [DIAGNOSTICS] ReadingPractice validation failed: size is ${blob.size} bytes (too small).`);
+          console.warn(`[DIAGNOSTICS] ReadingPractice validation failed: size is ${sizeVal} bytes (too small).`);
         } else if (durationMs < 1000) {
           isValid = false;
-          validationMsg = "Recording failed or was too short. Please record again.";
-          console.error(`❌ [DIAGNOSTICS] ReadingPractice validation failed: duration is ${durationMs}ms (too short).`);
+          console.warn(`[DIAGNOSTICS] ReadingPractice validation failed: duration is ${durationMs}ms (too short).`);
         } else {
           console.log(`[DIAGNOSTICS] Starting metadata check in ReadingPractice...`);
           const validation = await new Promise<{ isValid: boolean; error?: string; duration?: number; isTimeout?: boolean }>((resolve) => {
@@ -416,25 +410,16 @@ export default function ReadingPractice() {
 
           if (!validation.isValid) {
             isValid = false;
-            validationMsg = "Recording failed or was too short. Please record again.";
-            console.error(`❌ [DIAGNOSTICS] ReadingPractice metadata validation failed: ${validation.error}`);
+            console.warn(`[DIAGNOSTICS] ReadingPractice metadata validation failed: ${validation.error}`);
           } else {
             metadataDurationSec = validation.duration || 0;
-            console.log(`✅ [DIAGNOSTICS] ReadingPractice metadata validation passed: ${metadataDurationSec}s`);
           }
         }
 
-        const sizeVal = blob ? blob.size : 0;
-        if (!isValid) {
-          console.error(`❌ [DIAGNOSTICS-SUMMARY] uploadBlocked=true | mimeType="${finalMimeType}" | blobSize=${sizeVal} | durationMs=${durationMs} | metadataDurationSec=${metadataDurationSec}`);
-          setRecordingError(validationMsg);
-          return;
-        }
-
-        console.log(`✅ [DIAGNOSTICS-SUMMARY] uploadBlocked=false | mimeType="${finalMimeType}" | blobSize=${sizeVal} | durationMs=${durationMs} | metadataDurationSec=${metadataDurationSec}`);
+        console.log(`[DIAGNOSTICS-SUMMARY] uploadBlocked=false | mimeType="${finalMimeType}" | blobSize=${sizeVal} | durationMs=${durationMs} | metadataDurationSec=${metadataDurationSec} | isValid=${isValid}`);
 
         // Proceed to upload and evaluation
-        const url = URL.createObjectURL(blob!);
+        const url = URL.createObjectURL(blob);
         setAudioUrls((prev) => {
           const oldUrl = prev[taskKey];
           if (oldUrl) URL.revokeObjectURL(oldUrl);
