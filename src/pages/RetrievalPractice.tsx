@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { getStudentFlashcards, mapFirestoreToLocal, logRetrievalAttempt } from '../lib/firebaseDb';
 import { db } from '../lib/db';
@@ -34,6 +34,8 @@ export default function RetrievalPractice() {
   const [recordedBlobUrl, setRecordedBlobUrl] = useState<string | null>(null);
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const recordingStartTimeRef = useRef<number>(0);
+  const recordingStopTimeRef = useRef<number>(0);
   const [transcript, setTranscript] = useState('');
   const [recognition, setRecognition] = useState<any>(null);
   const [voicePref, setVoicePref] = useState<'female' | 'male' | 'system'>('system');
@@ -268,6 +270,7 @@ export default function RetrievalPractice() {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
     if (isRecording) {
+      recordingStopTimeRef.current = Date.now();
       if (mediaRecorder && mediaRecorder.state !== 'inactive') {
         mediaRecorder.stop();
         mediaRecorder.stream.getTracks().forEach(track => track.stop());
@@ -283,11 +286,96 @@ export default function RetrievalPractice() {
         const { recorder, mimeType } = await startSafeMediaRecorder(stream);
         const chunks: Blob[] = [];
         recorder.ondataavailable = (e) => chunks.push(e.data);
-        recorder.onstop = () => {
-          const blob = new Blob(chunks, { type: mimeType });
-          setRecordedBlobUrl(URL.createObjectURL(blob));
+        recorder.onstop = async () => {
+          // Wait 150ms to flush final chunks
+          await new Promise(resolve => setTimeout(resolve, 150));
+
+          const finalMimeType = recorder.mimeType || mimeType || 'audio/webm';
+          const stopTime = recordingStopTimeRef.current > 0 ? recordingStopTimeRef.current : Date.now();
+          const durationMs = stopTime - recordingStartTimeRef.current;
+
+          const blob = chunks.length > 0 ? new Blob(chunks, { type: finalMimeType }) : null;
+
+          let isValid = true;
+          let validationMsg = "";
+          let metadataDurationSec = 0;
+
+          if (!blob) {
+            isValid = false;
+            validationMsg = "Recording failed or was too short. Please record again.";
+            console.error(`❌ [DIAGNOSTICS] RetrievalPractice validation failed: blob is null.`);
+          } else if (blob.size < 1000) {
+            isValid = false;
+            validationMsg = "Recording failed or was too short. Please record again.";
+            console.error(`❌ [DIAGNOSTICS] RetrievalPractice validation failed: size is ${blob.size} bytes (too small).`);
+          } else if (durationMs < 1000) {
+            isValid = false;
+            validationMsg = "Recording failed or was too short. Please record again.";
+            console.error(`❌ [DIAGNOSTICS] RetrievalPractice validation failed: duration is ${durationMs}ms (too short).`);
+          } else {
+            console.log(`[DIAGNOSTICS] Starting metadata check in RetrievalPractice...`);
+            const validation = await new Promise<{ isValid: boolean; error?: string; duration?: number; isTimeout?: boolean }>((resolve) => {
+              const url = URL.createObjectURL(blob);
+              const audio = new Audio(url);
+              audio.muted = true;
+
+              const cleanup = () => {
+                audio.removeEventListener('loadedmetadata', onLoaded);
+                audio.removeEventListener('error', onError);
+                URL.revokeObjectURL(url);
+              };
+
+              const onLoaded = () => {
+                const dur = audio.duration;
+                cleanup();
+                if (isNaN(dur) || dur <= 0 || dur === Infinity) {
+                  resolve({ isValid: false, error: `Invalid duration (${dur}s)`, duration: dur });
+                } else {
+                  resolve({ isValid: true, duration: dur });
+                }
+              };
+
+              const onError = () => {
+                cleanup();
+                resolve({ isValid: false, error: `Audio decode error` });
+              };
+
+              audio.addEventListener('loadedmetadata', onLoaded);
+              audio.addEventListener('error', onError);
+              audio.load();
+
+              setTimeout(() => {
+                cleanup();
+                resolve({ isValid: true, duration: 0, isTimeout: true });
+              }, 1500);
+            });
+
+            if (!validation.isValid) {
+              isValid = false;
+              validationMsg = "Recording failed or was too short. Please record again.";
+              console.error(`❌ [DIAGNOSTICS] RetrievalPractice metadata validation failed: ${validation.error}`);
+            } else {
+              metadataDurationSec = validation.duration || 0;
+              console.log(`✅ [DIAGNOSTICS] RetrievalPractice metadata validation passed: ${metadataDurationSec}s`);
+            }
+          }
+
+          const sizeVal = blob ? blob.size : 0;
+          if (!isValid) {
+            console.error(`❌ [DIAGNOSTICS-SUMMARY] uploadBlocked=true | mimeType="${finalMimeType}" | blobSize=${sizeVal} | durationMs=${durationMs} | metadataDurationSec=${metadataDurationSec}`);
+            setValidationError(validationMsg);
+            setTranscript('');
+            return;
+          }
+
+          console.log(`✅ [DIAGNOSTICS-SUMMARY] uploadBlocked=false | mimeType="${finalMimeType}" | blobSize=${sizeVal} | durationMs=${durationMs} | metadataDurationSec=${metadataDurationSec}`);
+
+          setRecordedBlobUrl(URL.createObjectURL(blob!));
           setValidationError(null);
         };
+
+        recordingStartTimeRef.current = Date.now();
+        recordingStopTimeRef.current = 0;
         recorder.start();
         setMediaRecorder(recorder);
 

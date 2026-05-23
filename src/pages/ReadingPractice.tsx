@@ -83,6 +83,8 @@ export default function ReadingPractice() {
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const mimeTypeRef = useRef<string>('audio/webm');
+  const recordingStartTimeRef = useRef<number>(0);
+  const recordingStopTimeRef = useRef<number>(0);
 
   const [audioUrls, setAudioUrls] = useState<Record<TaskKey, string | null>>({
     first_explanation: null,
@@ -346,14 +348,98 @@ export default function ReadingPractice() {
       };
 
       recorder.onstop = async () => {
-        const blob = new Blob(chunksRef.current, { type: mimeTypeRef.current });
-        const url = URL.createObjectURL(blob);
+        // Stop all tracks to release microphone
+        stopTracks();
+
+        // Wait 150ms to flush final chunks
+        await new Promise(resolve => setTimeout(resolve, 150));
+
+        const finalMimeType = recorder.mimeType || mimeTypeRef.current || 'audio/webm';
+        const stopTime = recordingStopTimeRef.current > 0 ? recordingStopTimeRef.current : Date.now();
+        const durationMs = stopTime - recordingStartTimeRef.current;
+
+        const blob = chunksRef.current.length > 0 ? new Blob(chunksRef.current, { type: finalMimeType }) : null;
+
+        let isValid = true;
+        let validationMsg = "";
+        let metadataDurationSec = 0;
+
+        if (!blob) {
+          isValid = false;
+          validationMsg = "Recording failed or was too short. Please record again.";
+          console.error(`❌ [DIAGNOSTICS] ReadingPractice validation failed: blob is null.`);
+        } else if (blob.size < 1000) {
+          isValid = false;
+          validationMsg = "Recording failed or was too short. Please record again.";
+          console.error(`❌ [DIAGNOSTICS] ReadingPractice validation failed: size is ${blob.size} bytes (too small).`);
+        } else if (durationMs < 1000) {
+          isValid = false;
+          validationMsg = "Recording failed or was too short. Please record again.";
+          console.error(`❌ [DIAGNOSTICS] ReadingPractice validation failed: duration is ${durationMs}ms (too short).`);
+        } else {
+          console.log(`[DIAGNOSTICS] Starting metadata check in ReadingPractice...`);
+          const validation = await new Promise<{ isValid: boolean; error?: string; duration?: number; isTimeout?: boolean }>((resolve) => {
+            const url = URL.createObjectURL(blob);
+            const audio = new Audio(url);
+            audio.muted = true;
+
+            const cleanup = () => {
+              audio.removeEventListener('loadedmetadata', onLoaded);
+              audio.removeEventListener('error', onError);
+              URL.revokeObjectURL(url);
+            };
+
+            const onLoaded = () => {
+              const dur = audio.duration;
+              cleanup();
+              if (isNaN(dur) || dur <= 0 || dur === Infinity) {
+                resolve({ isValid: false, error: `Invalid duration (${dur}s)`, duration: dur });
+              } else {
+                resolve({ isValid: true, duration: dur });
+              }
+            };
+
+            const onError = () => {
+              cleanup();
+              resolve({ isValid: false, error: `Audio decode error` });
+            };
+
+            audio.addEventListener('loadedmetadata', onLoaded);
+            audio.addEventListener('error', onError);
+            audio.load();
+
+            setTimeout(() => {
+              cleanup();
+              resolve({ isValid: true, duration: 0, isTimeout: true });
+            }, 1500);
+          });
+
+          if (!validation.isValid) {
+            isValid = false;
+            validationMsg = "Recording failed or was too short. Please record again.";
+            console.error(`❌ [DIAGNOSTICS] ReadingPractice metadata validation failed: ${validation.error}`);
+          } else {
+            metadataDurationSec = validation.duration || 0;
+            console.log(`✅ [DIAGNOSTICS] ReadingPractice metadata validation passed: ${metadataDurationSec}s`);
+          }
+        }
+
+        const sizeVal = blob ? blob.size : 0;
+        if (!isValid) {
+          console.error(`❌ [DIAGNOSTICS-SUMMARY] uploadBlocked=true | mimeType="${finalMimeType}" | blobSize=${sizeVal} | durationMs=${durationMs} | metadataDurationSec=${metadataDurationSec}`);
+          setRecordingError(validationMsg);
+          return;
+        }
+
+        console.log(`✅ [DIAGNOSTICS-SUMMARY] uploadBlocked=false | mimeType="${finalMimeType}" | blobSize=${sizeVal} | durationMs=${durationMs} | metadataDurationSec=${metadataDurationSec}`);
+
+        // Proceed to upload and evaluation
+        const url = URL.createObjectURL(blob!);
         setAudioUrls((prev) => {
           const oldUrl = prev[taskKey];
           if (oldUrl) URL.revokeObjectURL(oldUrl);
           return { ...prev, [taskKey]: url };
         });
-        stopTracks();
 
         if (item?.articleText) {
           setIsAiEvaluating(prev => ({ ...prev, [taskKey]: true }));
@@ -372,6 +458,8 @@ export default function ReadingPractice() {
         }
       };
 
+      recordingStartTimeRef.current = Date.now();
+      recordingStopTimeRef.current = 0;
       recorder.start();
       setIsRecording(true);
     } catch (error: any) {
@@ -384,6 +472,7 @@ export default function ReadingPractice() {
 
   const stopRecording = () => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      recordingStopTimeRef.current = Date.now();
       mediaRecorderRef.current.stop();
     }
     setIsRecording(false);
