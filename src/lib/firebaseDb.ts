@@ -474,6 +474,7 @@ export async function logToneAttempt(
     selfRating: number;
     selfRatingLabel: string;
     score?: number | null;
+    reRecordCount?: number;
   },
   record: ChunkRecord
 ) {
@@ -490,7 +491,7 @@ export async function logToneAttempt(
     const history = docData.retrievalHistory || [];
     console.log(`[DEBUG] Previous retrievalHistory length (for tone): ${history.length}`);
 
-    const isCorrect = logData.selfRating >= 3; // 3 = Good, 4 = Very confident
+    const isCorrect = logData.selfRating >= 3; // For compatibility
     const now = new Date().toISOString();
     const randomSuffix = Math.floor(Math.random() * 10000);
     const attemptId = `attempt_${Date.now()}_${randomSuffix}`;
@@ -508,7 +509,11 @@ export async function logToneAttempt(
       selectedPipelineVersion: logData.selectedPipelineVersion,
       processedUserCurve: logData.processedUserCurve,
       targetCurve: logData.targetCurve || null,
-      score: logData.score || null
+      score: logData.score || null,
+      reRecordCount: logData.reRecordCount || 0,
+      word: record.studentConnections?.customFocusExpression || '',
+      wordId: record.learningItemId || '',
+      targetExpression: record.studentConnections?.customFocusExpression || ''
     });
 
     const updatedHistory = [...history, newAttempt];

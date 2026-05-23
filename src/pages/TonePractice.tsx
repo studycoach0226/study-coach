@@ -23,7 +23,7 @@ export default function TonePractice() {
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error', msg: string } | null>(null);
   const [showHints, setShowHints] = useState(false);
   const answerMode = 'voice';
-  const [promptMode, setPromptMode] = useState<'meaning' | 'pronunciation'>('meaning');
+  const [promptMode, setPromptMode] = useState<'meaning' | 'pronunciation'>('pronunciation');
   const [isRecording, setIsRecording] = useState(false);
   const [isEvaluating, setIsEvaluating] = useState(false);
   const [recordedBlobUrl, setRecordedBlobUrl] = useState<string | null>(null);
@@ -36,6 +36,7 @@ export default function TonePractice() {
   const [pipelineVersion, setPipelineVersion] = useState<'v1' | 'v2' | 'v3' | 'v4'>('v3');
   const [matchScore, setMatchScore] = useState<number | null>(null);
   const [isScoringLoading, setIsScoringLoading] = useState(false);
+  const [reRecordCount, setReRecordCount] = useState<number>(0);
 
   const [currentRecordingInfo, setCurrentRecordingInfo] = useState<{
     blob: Blob | null;
@@ -223,6 +224,27 @@ export default function TonePractice() {
     setIsScoringLoading(false);
     setSelectedRating(null);
     setIsSaving(false);
+    setReRecordCount(0);
+    setCurrentRecordingInfo({
+      blob: null,
+      attemptId: null,
+      audioUrl: null,
+      isUploading: false,
+      uploadError: false,
+      mimeType: null
+    });
+  };
+
+  const resetToneStatesForReRecord = () => {
+    setFeedback(null);
+    setIsRecording(false);
+    setRecordedBlobUrl(null);
+    setValidationError(null);
+    setUserCurve([]);
+    setProcessedUserCurve([]);
+    setMatchScore(null);
+    setIsScoringLoading(false);
+    setSelectedRating(null);
     setCurrentRecordingInfo({
       blob: null,
       attemptId: null,
@@ -234,14 +256,14 @@ export default function TonePractice() {
   };
 
   const handleReRecord = () => {
-    resetToneStates();
+    setReRecordCount(prev => prev + 1);
+    resetToneStatesForReRecord();
   };
 
   const RATING_OPTIONS = [
-    { rating: 1, label: "Not familiar yet" },
-    { rating: 2, label: "Getting better" },
-    { rating: 3, label: "Good" },
-    { rating: 4, label: "Very confident" }
+    { rating: 1, label: "🔴 Not yet" },
+    { rating: 2, label: "🟡 Improving" },
+    { rating: 3, label: "🟢 Confident" }
   ];
 
   const handleSaveAndNext = async () => {
@@ -256,29 +278,23 @@ export default function TonePractice() {
     setIsSaving(true);
     setValidationError(null);
 
-    let audioUrl = recordingInfoRef.current.audioUrl;
-    let uploadError = recordingInfoRef.current.uploadError;
+    let audioUrl = null;
+    let uploadError = false;
 
-    if (recordingInfoRef.current.isUploading) {
-      console.log("[DEBUG] Audio upload still in progress. Waiting up to 10 seconds...");
+    const recordingInfo = recordingInfoRef.current;
+    if (recordingInfo.blob) {
+      const blob = recordingInfo.blob;
+      const ext = getExtensionFromMimeType(blob.type);
+      const permanentAttemptId = `attempt_${Date.now()}`;
+      const storagePath = `studentAudio/${studentId}/${currentPair.item.id}/toneAttempts/${permanentAttemptId}.${ext}`;
+
       try {
-        await new Promise<void>((resolve) => {
-          let checkCount = 0;
-          const interval = setInterval(() => {
-            checkCount++;
-            if (!recordingInfoRef.current.isUploading) {
-              clearInterval(interval);
-              audioUrl = recordingInfoRef.current.audioUrl;
-              uploadError = recordingInfoRef.current.uploadError;
-              resolve();
-            } else if (checkCount > 100) {
-              clearInterval(interval);
-              uploadError = true;
-              resolve();
-            }
-          }, 100);
-        });
-      } catch (e) {
+        console.log(`[DEBUG] Official submission: uploading final audio to ${storagePath}`);
+        const base64 = await blobToBase64(blob);
+        audioUrl = await uploadAsset(base64, storagePath);
+        console.log("✅ [DEBUG] Final audio upload success:", audioUrl);
+      } catch (err: any) {
+        console.error("❌ [DEBUG] Final audio upload failed:", err);
         uploadError = true;
       }
     }
@@ -291,14 +307,15 @@ export default function TonePractice() {
         studentId as string,
         {
           audioUrl: audioUrl || null,
-          audioMimeType: recordingInfoRef.current.mimeType || null,
+          audioMimeType: recordingInfo.mimeType || null,
           uploadError: uploadError || undefined,
           selectedPipelineVersion: pipelineVersion,
           processedUserCurve: processedUserCurve,
           targetCurve: targetCurve || undefined,
           selfRating: selectedRating,
           selfRatingLabel,
-          score: matchScore
+          score: matchScore,
+          reRecordCount: reRecordCount
         },
         currentPair.record as any
       );
@@ -423,47 +440,7 @@ export default function TonePractice() {
     return 'webm';
   };
 
-  const startBackgroundAudioUpload = async (blob: Blob) => {
-    const currentPair = practiceQueue[currentIndex];
-    if (!currentPair) return;
 
-    const randomSuffix = Math.floor(Math.random() * 10000);
-    const attemptId = `attempt_${Date.now()}_${randomSuffix}`;
-    const ext = getExtensionFromMimeType(blob.type);
-    const mimeType = blob.type || 'audio/webm';
-    const storagePath = `studentAudio/${studentId}/${currentPair.item.id}/toneAttempts/${attemptId}.${ext}`;
-
-    setCurrentRecordingInfo({
-      blob,
-      attemptId,
-      audioUrl: null,
-      isUploading: true,
-      uploadError: false,
-      mimeType
-    });
-
-    try {
-      console.log(`[DEBUG] Starting background audio upload. Path: ${storagePath}, MIME: ${mimeType}`);
-      const base64 = await blobToBase64(blob);
-      const audioUrl = await uploadAsset(base64, storagePath);
-      console.log("✅ [DEBUG] Background audio upload success:", audioUrl);
-      
-      setCurrentRecordingInfo(prev => {
-        if (prev.attemptId === attemptId) {
-          return { ...prev, audioUrl, isUploading: false, uploadError: false };
-        }
-        return prev;
-      });
-    } catch (err: any) {
-      console.error("❌ [DEBUG] Background audio upload failed:", err);
-      setCurrentRecordingInfo(prev => {
-        if (prev.attemptId === attemptId) {
-          return { ...prev, isUploading: false, uploadError: true };
-        }
-        return prev;
-      });
-    }
-  };
 
   const startToneRecording = async () => {
     try {
@@ -482,7 +459,14 @@ export default function TonePractice() {
         const url = URL.createObjectURL(blob);
         setRecordedBlobUrl(url);
         fetchProcessedUserCurve(blob);
-        startBackgroundAudioUpload(blob);
+        setCurrentRecordingInfo({
+          blob,
+          attemptId: null,
+          audioUrl: null,
+          isUploading: false,
+          uploadError: false,
+          mimeType
+        });
       };
 
       recorder.start();
@@ -717,7 +701,24 @@ export default function TonePractice() {
     }
   };
 
-  const playTargetAudio = () => {
+  const playAiAudio = () => {
+    const current = practiceQueue[currentIndex];
+    if (!current) return;
+
+    const urls = current.record?.audioUrls;
+    const audioUrl = urls?.aiWord || urls?.aiChunk;
+
+    if (audioUrl) {
+      const audio = new Audio(audioUrl);
+      audio.play().catch(err => {
+        console.error("❌ Failed to play AI audio:", err);
+      });
+    } else {
+      console.warn("⚠️ No AI audio URL found.");
+    }
+  };
+
+  const playDemoAudio = () => {
     const current = practiceQueue[currentIndex];
     if (!current) return;
 
@@ -726,17 +727,15 @@ export default function TonePractice() {
       urls?.word ||
       urls?.studentChunk ||
       urls?.chunk ||
-      urls?.focusExpression ||
-      urls?.aiWord ||
-      urls?.aiChunk;
+      urls?.focusExpression;
 
     if (audioUrl) {
       const audio = new Audio(audioUrl);
       audio.play().catch(err => {
-        console.error("❌ Failed to play target audio:", err);
+        console.error("❌ Failed to play Demo audio:", err);
       });
     } else {
-      console.warn("⚠️ No target audio URL resolved.");
+      console.warn("⚠️ No Demo audio URL found.");
     }
   };
 
@@ -917,12 +916,28 @@ export default function TonePractice() {
         <div style={{ padding: '1.5rem', background: '#f0fdf4', borderRadius: '12px', border: '1px solid #bbf7d0', textAlign: 'center', margin: '1rem 0' }}>
           <h3 style={{ color: '#166534', marginBottom: '1rem' }}>Tone practice recorded</h3>
 
-          <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap', marginBottom: '1.5rem' }}>
-            <button className="btn btn-outline" style={{ background: '#fff' }} onClick={playTargetAudio}>🔊 Play Target Audio</button>
-            {recordedBlobUrl && (
-              <button className="btn btn-outline" style={{ background: '#fff' }} onClick={playRecording}>▶️ Play</button>
-            )}
-            <button className="btn btn-outline" style={{ background: '#fff' }} onClick={handleReRecord}>🔄 Re-record</button>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem' }}>
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+              <button 
+                className="btn btn-outline" 
+                style={{ background: '#fff', padding: '0.5rem 1rem' }} 
+                onClick={playAiAudio}
+                disabled={!current.record?.audioUrls?.aiWord && !current.record?.audioUrls?.aiChunk}
+              >
+                🤖 AI
+              </button>
+              <button 
+                className="btn btn-outline" 
+                style={{ background: '#fff', padding: '0.5rem 1rem' }} 
+                onClick={playDemoAudio}
+              >
+                🔊 Demo
+              </button>
+              {recordedBlobUrl && (
+                <button className="btn btn-outline" style={{ background: '#fff', padding: '0.5rem 1rem' }} onClick={playRecording}>▶ Yours</button>
+              )}
+            </div>
+            <button className="btn btn-outline" style={{ background: '#fff', padding: '0.4rem 0.8rem', fontSize: '0.9rem', color: '#475569' }} onClick={handleReRecord}>↻ Re-record</button>
           </div>
 
           {/* 5. Self Rating Section */}
@@ -930,12 +945,11 @@ export default function TonePractice() {
             <p style={{ fontWeight: 'bold', color: '#166534', marginBottom: '0.75rem', fontSize: '0.95rem' }}>
               How do you feel about this attempt?
             </p>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.75rem', maxWidth: '400px', margin: '0 auto' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem', maxWidth: '450px', margin: '0 auto' }}>
               {[
-                { rating: 1, label: "🔴 Not familiar yet", color: '#fee2e2', border: '#fca5a5', text: '#991b1b' },
-                { rating: 2, label: "🟡 Getting better", color: '#fef3c7', border: '#fcd34d', text: '#92400e' },
-                { rating: 3, label: "🟢 Good", color: '#dcfce7', border: '#86efac', text: '#166534' },
-                { rating: 4, label: "🔵 Very confident", color: '#dbeafe', border: '#93c5fd', text: '#1e40af' }
+                { rating: 1, label: "🔴 Not yet", color: '#fee2e2', border: '#fca5a5', text: '#991b1b' },
+                { rating: 2, label: "🟡 Improving", color: '#fef3c7', border: '#fcd34d', text: '#92400e' },
+                { rating: 3, label: "🟢 Confident", color: '#dcfce7', border: '#86efac', text: '#166534' }
               ].map(opt => {
                 const isSelected = selectedRating === opt.rating;
                 return (
@@ -1018,85 +1032,90 @@ export default function TonePractice() {
 
 
       <div style={{ textAlign: 'center' }}>
-        <div style={{ marginBottom: '2rem', background: '#f8fafc', padding: '1.25rem', borderRadius: '16px', border: '1px solid var(--border)', display: 'flex', flexWrap: 'wrap', gap: '1.5rem', justifyContent: 'center', alignItems: 'flex-end' }}>
-          <div style={{ flex: '1', minWidth: '150px' }}>
-            <p style={{ margin: '0 0 0.5rem', fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Prompt Mode</p>
-            <div style={{ display: 'flex', background: '#e2e8f0', padding: '0.2rem', borderRadius: '8px' }}>
-              {[
-                { id: 'meaning', label: 'Meaning' },
-                { id: 'pronunciation', label: 'Pronunciation' }
-              ].map(d => (
-                <button
-                  key={d.id}
-                  className="btn"
-                  style={{
-                    flex: '1',
-                    padding: '0.4rem 0.8rem',
-                    fontSize: '0.8rem',
-                    border: 'none',
-                    background: promptMode === d.id ? '#fff' : 'transparent',
-                    color: promptMode === d.id ? 'var(--primary)' : 'var(--text-muted)',
-                    boxShadow: promptMode === d.id ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
-                    fontWeight: promptMode === d.id ? 'bold' : 'normal'
-                  }}
-                  onClick={() => setPromptMode(d.id as any)}
-                >
-                  {d.label}
-                </button>
-              ))}
+        {/* Hide Prompt Mode Selector */}
+        {false && (
+          <div style={{ marginBottom: '2rem', background: '#f8fafc', padding: '1.25rem', borderRadius: '16px', border: '1px solid var(--border)', display: 'flex', flexWrap: 'wrap', gap: '1.5rem', justifyContent: 'center', alignItems: 'flex-end' }}>
+            <div style={{ flex: '1', minWidth: '150px' }}>
+              <p style={{ margin: '0 0 0.5rem', fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Prompt Mode</p>
+              <div style={{ display: 'flex', background: '#e2e8f0', padding: '0.2rem', borderRadius: '8px' }}>
+                {[
+                  { id: 'meaning', label: 'Meaning' },
+                  { id: 'pronunciation', label: 'Pronunciation' }
+                ].map(d => (
+                  <button
+                    key={d.id}
+                    className="btn"
+                    style={{
+                      flex: '1',
+                      padding: '0.4rem 0.8rem',
+                      fontSize: '0.8rem',
+                      border: 'none',
+                      background: promptMode === d.id ? '#fff' : 'transparent',
+                      color: promptMode === d.id ? 'var(--primary)' : 'var(--text-muted)',
+                      boxShadow: promptMode === d.id ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                      fontWeight: promptMode === d.id ? 'bold' : 'normal'
+                    }}
+                    onClick={() => setPromptMode(d.id as any)}
+                  >
+                    {d.label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
+        )}
 
+        {/* AI Voice Preference Selector - Hidden */}
+        {false && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.75rem', marginBottom: '2rem', padding: '0.5rem 1rem', background: '#f1f5f9', borderRadius: '20px' }}>
+            <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--text-muted)' }}>AI Voice:</span>
+            {(['system', 'female', 'male'] as const).map(p => (
+              <button
+                key={p}
+                onClick={() => setVoicePref(p)}
+                style={{
+                  padding: '0.2rem 0.6rem',
+                  fontSize: '0.7rem',
+                  border: 'none',
+                  borderRadius: '12px',
+                  cursor: 'pointer',
+                  background: voicePref === p ? 'var(--primary)' : 'transparent',
+                  color: voicePref === p ? '#fff' : 'var(--text-muted)',
+                  fontWeight: voicePref === p ? 'bold' : 'normal',
+                  textTransform: 'capitalize'
+                }}
+              >
+                {p}
+              </button>
+            ))}
+          </div>
+        )}
 
-        </div>
-
-        {/* AI Voice Preference Selector */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.75rem', marginBottom: '2rem', padding: '0.5rem 1rem', background: '#f1f5f9', borderRadius: '20px' }}>
-          <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--text-muted)' }}>AI Voice:</span>
-          {(['system', 'female', 'male'] as const).map(p => (
-            <button
-              key={p}
-              onClick={() => setVoicePref(p)}
-              style={{
-                padding: '0.2rem 0.6rem',
-                fontSize: '0.7rem',
-                border: 'none',
-                borderRadius: '12px',
-                cursor: 'pointer',
-                background: voicePref === p ? 'var(--primary)' : 'transparent',
-                color: voicePref === p ? '#fff' : 'var(--text-muted)',
-                fontWeight: voicePref === p ? 'bold' : 'normal',
-                textTransform: 'capitalize'
-              }}
-            >
-              {p}
-            </button>
-          ))}
-        </div>
-
-        {/* Green Curve Pipeline Selector */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.75rem', marginBottom: '2rem', padding: '0.5rem 1rem', background: '#f1f5f9', borderRadius: '20px' }}>
-          <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--text-muted)' }}>Green Line:</span>
-          {(['v1', 'v2', 'v3', 'v4'] as const).map(p => (
-            <button
-              key={p}
-              onClick={() => setPipelineVersion(p)}
-              style={{
-                padding: '0.2rem 0.6rem',
-                fontSize: '0.7rem',
-                border: 'none',
-                borderRadius: '12px',
-                cursor: 'pointer',
-                background: pipelineVersion === p ? 'var(--primary)' : 'transparent',
-                color: pipelineVersion === p ? '#fff' : 'var(--text-muted)',
-                fontWeight: pipelineVersion === p ? 'bold' : 'normal',
-                textTransform: 'uppercase'
-              }}
-            >
-              {p}
-            </button>
-          ))}
-        </div>
+        {/* Green Curve Pipeline Selector - Hidden */}
+        {false && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.75rem', marginBottom: '2rem', padding: '0.5rem 1rem', background: '#f1f5f9', borderRadius: '20px' }}>
+            <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--text-muted)' }}>Green Line:</span>
+            {(['v1', 'v2', 'v3', 'v4'] as const).map(p => (
+              <button
+                key={p}
+                onClick={() => setPipelineVersion(p)}
+                style={{
+                  padding: '0.2rem 0.6rem',
+                  fontSize: '0.7rem',
+                  border: 'none',
+                  borderRadius: '12px',
+                  cursor: 'pointer',
+                  background: pipelineVersion === p ? 'var(--primary)' : 'transparent',
+                  color: pipelineVersion === p ? '#fff' : 'var(--text-muted)',
+                  fontWeight: pipelineVersion === p ? 'bold' : 'normal',
+                  textTransform: 'uppercase'
+                }}
+              >
+                {p}
+              </button>
+            ))}
+          </div>
+        )}
 
         <div className="card" style={{ textAlign: 'center', minHeight: '400px', display: 'flex', flexDirection: 'column', justifyContent: 'center', position: 'relative' }}>
           <p style={{ color: 'var(--text-muted)', fontWeight: 'bold', fontSize: '0.75rem', letterSpacing: '0.1em', margin: 0 }}>TASK PROMPT</p>
@@ -1107,7 +1126,7 @@ export default function TonePractice() {
             {testContent.prompt}
           </div>
 
-          {/* 實作的語調分析畫布 */}
+           {/* 實作的語調分析畫布 */}
           <div style={{
             margin: '0 auto 2rem',
             width: '100%',
@@ -1122,9 +1141,14 @@ export default function TonePractice() {
             position: 'relative'
           }}>
             <svg width="500" height="300" style={{ overflow: 'visible' }}> {/* 💡 對齊 Demo 高度 */}
-              {renderPitchLine(targetCurve, "#ff4d4d", 4, 0.8)}
-              {processedUserCurve.length === 0 && renderPitchLine(userCurve, "#00d2ff", 4, 1)}
-              {processedUserCurve.length > 0 && renderPitchLine(processedUserCurve, "#10b981", 4, 1)}
+              {/* Red Line: only show after submission */}
+              {feedback && renderPitchLine(targetCurve, "#ff4d4d", 4, 0.8)}
+              
+              {/* Blue Line: only show before submission */}
+              {!feedback && renderPitchLine(userCurve, "#00d2ff", 4, 1)}
+              
+              {/* Green Line: only show after submission */}
+              {feedback && processedUserCurve.length > 0 && renderPitchLine(processedUserCurve, "#10b981", 4, 1)}
             </svg>
           </div>
 
@@ -1150,24 +1174,24 @@ export default function TonePractice() {
             </div>
           )}
 
-          {/* Card Navigation Controls */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', maxWidth: '500px', margin: '0 auto 1rem' }}>
+          {/* Card Navigation Controls (De-emphasized) */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', maxWidth: '400px', margin: '1rem auto 0.5rem', opacity: 0.6 }}>
             <button 
               className="btn btn-outline" 
               onClick={handlePrevCard}
               disabled={currentIndex === 0}
-              style={{ padding: '0.5rem 1rem' }}
+              style={{ padding: '0.25rem 0.6rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}
             >
-              ⬅️ Previous
+              ⬅️ Prev
             </button>
-            <span style={{ fontWeight: 'bold', color: 'var(--text-muted)' }}>
+            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
               {currentIndex + 1} / {practiceQueue.length}
             </span>
             <button 
               className="btn btn-outline" 
               onClick={handleNextCard}
               disabled={currentIndex === practiceQueue.length - 1}
-              style={{ padding: '0.5rem 1rem' }}
+              style={{ padding: '0.25rem 0.6rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}
             >
               Next ➡️
             </button>
