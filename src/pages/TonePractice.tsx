@@ -11,7 +11,8 @@ import { evaluateTypedAnswer } from '../lib/aiService';
 
 const SPEECH_API_BASE = (import.meta as any).env.VITE_SPEECH_API_BASE || "http://localhost:8000";
 const ENABLE_VISIBLE_WINDOW_SLICING = false;
-const ENABLE_BACKEND_GREEN_LINE = false;
+const ENABLE_BACKEND_GREEN_LINE = true;
+const GREEN_LINE_BASELINE_MODE: "match_red_v3" | "v4_voiced_region" = "v4_voiced_region";
 
 export default function TonePractice() {
   const navigate = useNavigate();
@@ -46,7 +47,7 @@ export default function TonePractice() {
   const [devMinVoicedMs, setDevMinVoicedMs] = useState<string>('');
   const [devLiveEnergyThresh, setDevLiveEnergyThresh] = useState<number>(() => {
     const saved = localStorage.getItem('devLiveEnergyThresh');
-    return saved !== null ? parseFloat(saved) : 0;
+    return saved !== null ? parseFloat(saved) : 0.015;
   });
   const [userEnergyCurve, setUserEnergyCurve] = useState<number[]>([]);
   const [purpleCurve, setPurpleCurve] = useState<number[]>([]);
@@ -743,8 +744,24 @@ export default function TonePractice() {
 
   const fetchTargetCurveFromUrl = async (audioUrl: string) => {
     console.log("🌐 [DEBUG] Fetching baseline curve for:", audioUrl);
+    
+    let queryParams: string[] = [];
+    queryParams.push(`conf_thresh=${devConfThresh}`);
+    queryParams.push(`min_freq=${devMinFreq}`);
+    if (devLiveEnergyThresh > 0) {
+      queryParams.push(`energy_thresh=${devLiveEnergyThresh}`);
+    } else if (devEnergyThresh !== '') {
+      queryParams.push(`energy_thresh=${devEnergyThresh}`);
+    }
+    if (devMinVoicedMs !== '') {
+      queryParams.push(`min_voiced_ms=${devMinVoicedMs}`);
+    }
+    
+    const queryString = queryParams.length > 0 ? `?${queryParams.join('&')}` : '';
+    const fullUrl = `${SPEECH_API_BASE}/get_pitch_from_url_v4${queryString}`;
+
     try {
-      const res = await fetch(`${SPEECH_API_BASE}/get_pitch_from_url_v3`, {
+      const res = await fetch(fullUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -764,21 +781,32 @@ export default function TonePractice() {
 
   const fetchProcessedUserCurve = async (blob: Blob) => {
     let endpoint = '/get_pitch_v3';
-    if (pipelineVersion === 'v1') endpoint = '/get_pitch';
-    if (pipelineVersion === 'v2') endpoint = '/get_pitch_v2';
-    if (pipelineVersion === 'v4') endpoint = '/get_pitch_v4';
+    if (GREEN_LINE_BASELINE_MODE === "match_red_v3") {
+      endpoint = '/get_pitch_v3';
+    } else if (GREEN_LINE_BASELINE_MODE === "v4_voiced_region") {
+      endpoint = '/get_pitch_v4';
+    } else {
+      if (pipelineVersion === 'v1') endpoint = '/get_pitch';
+      if (pipelineVersion === 'v2') endpoint = '/get_pitch_v2';
+      if (pipelineVersion === 'v4') endpoint = '/get_pitch_v4';
+    }
 
     let queryParams: string[] = [];
-    if (endpoint === '/get_pitch_v3') {
-      queryParams.push(`conf_thresh=${devConfThresh}`);
-      queryParams.push(`min_freq=${devMinFreq}`);
-      if (devLiveEnergyThresh > 0) {
-        queryParams.push(`energy_thresh=${devLiveEnergyThresh}`);
-      } else if (devEnergyThresh !== '') {
-        queryParams.push(`energy_thresh=${devEnergyThresh}`);
-      }
-      if (devMinVoicedMs !== '') {
-        queryParams.push(`min_voiced_ms=${devMinVoicedMs}`);
+    if (GREEN_LINE_BASELINE_MODE === "match_red_v3") {
+      queryParams.push('conf_thresh=0.55');
+      queryParams.push('min_freq=50.0');
+    } else {
+      if (endpoint === '/get_pitch_v3' || endpoint === '/get_pitch_v4') {
+        queryParams.push(`conf_thresh=${devConfThresh}`);
+        queryParams.push(`min_freq=${devMinFreq}`);
+        if (devLiveEnergyThresh > 0) {
+          queryParams.push(`energy_thresh=${devLiveEnergyThresh}`);
+        } else if (devEnergyThresh !== '') {
+          queryParams.push(`energy_thresh=${devEnergyThresh}`);
+        }
+        if (devMinVoicedMs !== '') {
+          queryParams.push(`min_voiced_ms=${devMinVoicedMs}`);
+        }
       }
     }
     const queryString = queryParams.length > 0 ? `?${queryParams.join('&')}` : '';
@@ -796,7 +824,7 @@ export default function TonePractice() {
         body: formData
       });
       
-      console.log(`🌐 [DEBUG] Response status: ${res.status}`);
+      console.log(`🌐 [V4 FRONTEND DEBUG] Response status: ${res.status}`);
       
       if (!res.ok) {
         throw new Error(`Server returned status ${res.status}`);
@@ -805,14 +833,21 @@ export default function TonePractice() {
       const curve = await res.json();
       
       if (Array.isArray(curve)) {
+        const isAllZeros = curve.every(val => val === 0);
+        console.log(`🌐 [V4 FRONTEND DEBUG] returned curve length: ${curve.length}`);
+        console.log(`🌐 [V4 FRONTEND DEBUG] first 10 returned values: [${curve.slice(0, 10).join(', ')}]`);
+        console.log(`🌐 [V4 FRONTEND DEBUG] whether all returned values are 0: ${isAllZeros}`);
+        
+        console.log(`🌐 [V4 FRONTEND DEBUG] calling setProcessedUserCurve...`);
         setProcessedUserCurve(curve);
-        console.log("✅ [DEBUG] Returned curve length:", curve.length);
+        console.log(`🌐 [V4 FRONTEND DEBUG] setProcessedUserCurve called successfully`);
+        
         fetchContourScore(targetCurve, curve);
       } else {
-        console.error("❌ [DEBUG] Returned curve is not an array:", curve);
+        console.error("❌ [V4 FRONTEND DEBUG] Returned curve is not an array:", curve);
       }
     } catch (err: any) {
-      console.error("❌ [DEBUG] Failed to fetch processed user curve:", err.message || err);
+      console.error("❌ [V4 FRONTEND DEBUG] Failed to fetch processed user curve:", err.message || err);
     }
   };
 

@@ -287,120 +287,302 @@ def process_f0_v3(y, sr, target_len=300, conf_thresh=0.55, kernel_size=3, ignore
     
     return final_curve.tolist()
 
-def process_f0_v4(y, sr, target_len=300, conf_thresh=0.55, kernel_size=3, ignore_start_ms=200, stable_window=5, max_stable_jump=20.0, drop_first_n_points=0, leading_plateau_window=50, plateau_jump_threshold=15.0, plateau_low_percentile_threshold=30, min_points_after_trim=30):
+def find_voiced_region_v4(pitch, energy, energy_thresh=None, onset_frames=8, offset_frames=20, ignore_start_frames=0):
+    n = len(pitch)
+    if energy_thresh is not None and energy_thresh > 0:
+        is_active = energy > energy_thresh
+    else:
+        is_active = pitch > 0
+
+    # Ensure ignore_start_frames is within safe bounds
+    safe_ignore = min(ignore_start_frames, max(0, n - 1))
+
+    # Force the ignored startup frames to be inactive so they cannot trigger onset
+    if safe_ignore > 0:
+        is_active = np.copy(is_active)
+        is_active[:safe_ignore] = False
+
+    # 1. Find start_idx
+    start_idx = safe_ignore
+    for i in range(safe_ignore, n - onset_frames + 1):
+        if np.all(is_active[i : i + onset_frames]):
+            start_idx = i
+            break
+    else:
+        # Fallback if no continuous active onset is found:
+        # Just use the first active frame after ignore_start_frames
+        nonzero = np.where(is_active[safe_ignore:])[0]
+        if len(nonzero) > 0:
+            start_idx = safe_ignore + nonzero[0]
+        else:
+            return safe_ignore, n - 1
+
+    # 2. Find end_idx from start_idx forward
+    end_idx = n - 1
+    # We look for a continuous inactive run of length offset_frames
+    for j in range(start_idx, n - offset_frames + 1):
+        if np.all(~is_active[j : j + offset_frames]):
+            # The active region ends at the last active frame before this silence run
+            active_before = np.where(is_active[start_idx : j])[0]
+            if len(active_before) > 0:
+                end_idx = start_idx + active_before[-1]
+            else:
+                end_idx = j - 1
+            break
+    else:
+        # Fallback if no trailing inactive run is found:
+        # Just use the last active frame after start_idx
+        nonzero = np.where(is_active[start_idx:])[0]
+        if len(nonzero) > 0:
+            end_idx = start_idx + nonzero[-1]
+
+    return start_idx, end_idx
+
+def process_f0_v4(
+    y, sr,
+    target_len=300,
+    conf_thresh=0.55,
+    min_freq=50.0,
+    energy_thresh=0.015,
+    min_voiced_ms=None,
+    kernel_size=3,
+    onset_frames=20,
+    offset_frames=20,
+    ignore_start_frames=50
+):
+    """
+    New V4: "voiced-region-first green line experiment".
+    Finds the continuous speech boundaries using consecutive active energy runs,
+    crops the pitch array to that region, and then smooths & resamples.
+
+    --------------------------------------------------------------------------
+    Old process_f0_v4 (Experimental Valley Bending / PCHIP) kept for reference:
+    --------------------------------------------------------------------------
+    # def process_f0_v4(y, sr, target_len=300, conf_thresh=0.55, kernel_size=3, ignore_start_ms=200, stable_window=5, max_stable_jump=20.0, drop_first_n_points=0, leading_plateau_window=50, plateau_jump_threshold=15.0, plateau_low_percentile_threshold=30, min_points_after_trim=30):
+    #     if y.dtype != np.float32:
+    #         y = y.astype(np.float32)
+    # 
+    #     result = detector.detect_from_array(y, sr)
+    #     pitch = result.pitch_hz
+    #     conf = result.confidence
+    # 
+    #     pitch[conf < conf_thresh] = 0
+    #     pitch[pitch < 50] = 0
+    # 
+    #     nonzero_idx = np.where(pitch > 0)[0]
+    #     if len(nonzero_idx) < 10:
+    #         return [0] * target_len
+    #         
+    #     start_idx = nonzero_idx[0]
+    #     end_idx = nonzero_idx[-1]
+    #     
+    #     trimmed_pitch = pitch[start_idx:end_idx+1]
+    #     
+    #     valid_mask = trimmed_pitch > 0
+    #     valid_idx = np.where(valid_mask)[0]
+    #     valid_vals = trimmed_pitch[valid_mask]
+    #     
+    #     if len(valid_vals) < 5:
+    #         return [0] * target_len
+    #         
+    #     full_idx = np.arange(len(trimmed_pitch))
+    # 
+    #     low_thresh = np.percentile(valid_vals, 30) if len(valid_vals) > 0 else 100
+    #     
+    #     gap_regions = []
+    #     current_gap = []
+    #     for i in range(len(trimmed_pitch)):
+    #         if trimmed_pitch[i] == 0:
+    #             current_gap.append(i)
+    #         else:
+    #             if len(current_gap) >= 10:
+    #                 gap_regions.append(current_gap)
+    #             current_gap = []
+    #     if len(current_gap) >= 10:
+    #         gap_regions.append(current_gap)
+    #         
+    #     new_idx = list(valid_idx)
+    #     new_vals = list(valid_vals)
+    #     
+    #     for gap in gap_regions:
+    #         idx_A = gap[0] - 1
+    #         idx_B = gap[-1] + 1
+    #         if idx_A >= 0 and idx_B < len(trimmed_pitch):
+    #             val_A = trimmed_pitch[idx_A]
+    #             val_B = trimmed_pitch[idx_B]
+    #             if val_A < low_thresh and val_B < low_thresh:
+    #                 idx_mid = (gap[0] + gap[-1]) // 2
+    #                 val_mid = min(val_A, val_B) - 10.0
+    #                 if val_mid < 50: val_mid = 50
+    #                 new_idx.append(idx_mid)
+    #                 new_vals.append(val_mid)
+    #                 
+    #     if len(new_idx) > len(valid_idx):
+    #         combined = sorted(zip(new_idx, new_vals))
+    #         valid_idx = np.array([x[0] for x in combined])
+    #         valid_vals = np.array([x[1] for x in combined])
+    #     
+    #     from scipy.interpolate import PchipInterpolator
+    #     if len(valid_idx) >= 4:
+    #         try:
+    #             f = PchipInterpolator(valid_idx, valid_vals, extrapolate=True)
+    #             interpolated_pitch = f(full_idx)
+    #         except Exception as e:
+    #             print(f"PCHIP interpolation failed: {e}. Falling back to linear.")
+    #             interpolated_pitch = np.interp(full_idx, valid_idx, valid_vals)
+    #     else:
+    #         interpolated_pitch = np.interp(full_idx, valid_idx, valid_vals)
+    #     
+    #     smoothed_pitch = scipy.signal.medfilt(interpolated_pitch, kernel_size=kernel_size)
+    #     
+    #     try:
+    #         win_len = min(11, len(smoothed_pitch))
+    #         if win_len % 2 == 0: win_len -= 1
+    #         if win_len >= 5:
+    #             smoothed_pitch = scipy.signal.savgol_filter(smoothed_pitch, window_length=win_len, polyorder=2)
+    #     except Exception as e:
+    #         print(f"Savgol filter failed: {e}")
+    #     
+    #     p_log = np.log2(smoothed_pitch)
+    #     p_min, p_max = np.log2(65), np.log2(400)
+    #     norm_pitch = (p_log - p_min) / (p_max - p_min) * 100
+    #     
+    #     inspect_len = min(leading_plateau_window, len(norm_pitch))
+    #     if inspect_len > 10:
+    #         diffs = np.diff(norm_pitch[:inspect_len])
+    #         large_jumps = np.where(diffs > plateau_jump_threshold)[0]
+    #         
+    #         if len(large_jumps) > 0:
+    #             jump_idx = large_jumps[0]
+    #             plateau = norm_pitch[:jump_idx + 1]
+    #             low_threshold = np.percentile(norm_pitch, plateau_low_percentile_threshold)
+    #             is_low = np.mean(plateau) < low_threshold
+    #             is_flat = np.std(plateau) < 5.0
+    #             has_enough_left = (len(norm_pitch) - (jump_idx + 1)) >= min_points_after_trim
+    #             
+    #             if is_low and is_flat and has_enough_left:
+    #                 norm_pitch = norm_pitch[jump_idx + 1:]
+    # 
+    #     xp = np.linspace(0, len(norm_pitch) - 1, target_len)
+    #     final_curve = np.interp(xp, np.arange(len(norm_pitch)), norm_pitch)
+    #     
+    #     return final_curve.tolist()
+    """
+    # 確保 float32
     if y.dtype != np.float32:
         y = y.astype(np.float32)
 
+    # SwiftF0
     result = detector.detect_from_array(y, sr)
     pitch = result.pitch_hz
     conf = result.confidence
 
+    # 1. 濾除低信心與異常頻率
     pitch[conf < conf_thresh] = 0
-    pitch[pitch < 50] = 0
+    pitch[pitch < min_freq] = 0
 
-    nonzero_idx = np.where(pitch > 0)[0]
-    if len(nonzero_idx) < 10:
-        return [0] * target_len
-        
-    start_idx = nonzero_idx[0]
-    end_idx = nonzero_idx[-1]
-    
-    trimmed_pitch = pitch[start_idx:end_idx+1]
-    
-    valid_mask = trimmed_pitch > 0
-    valid_idx = np.where(valid_mask)[0]
-    valid_vals = trimmed_pitch[valid_mask]
-    
-    if len(valid_vals) < 5:
-        return [0] * target_len
-        
-    full_idx = np.arange(len(trimmed_pitch))
+    # Calculate RMS energy for each frame
+    energy = np.zeros(len(pitch))
+    if len(pitch) > 0:
+        hop_size = max(1, len(y) // len(pitch))
+        for i in range(len(pitch)):
+            chunk = y[i * hop_size : (i + 1) * hop_size]
+            energy[i] = np.sqrt(np.mean(chunk**2)) if len(chunk) > 0 else 0.0
 
-    # 🔥 V4 Experiment: Targeted Valley Bending (Insert Mid-point in Low Gaps)
-    low_thresh = np.percentile(valid_vals, 30) if len(valid_vals) > 0 else 100
-    
-    # Find contiguous gaps
-    gap_regions = []
-    current_gap = []
-    for i in range(len(trimmed_pitch)):
-        if trimmed_pitch[i] == 0:
-            current_gap.append(i)
-        else:
-            if len(current_gap) >= 10: # Min gap length
-                gap_regions.append(current_gap)
-            current_gap = []
-    if len(current_gap) >= 10:
-        gap_regions.append(current_gap)
-        
-    # Insert mid-points for low valleys
-    new_idx = list(valid_idx)
-    new_vals = list(valid_vals)
-    
-    for gap in gap_regions:
-        idx_A = gap[0] - 1
-        idx_B = gap[-1] + 1
-        if idx_A >= 0 and idx_B < len(trimmed_pitch):
-            val_A = trimmed_pitch[idx_A]
-            val_B = trimmed_pitch[idx_B]
-            if val_A < low_thresh and val_B < low_thresh:
-                idx_mid = (gap[0] + gap[-1]) // 2
-                val_mid = min(val_A, val_B) - 10.0 # Sag by 10 Hz
-                if val_mid < 50: val_mid = 50 # Keep above min pitch
-                new_idx.append(idx_mid)
-                new_vals.append(val_mid)
-                
-    # Sort after insertion
-    if len(new_idx) > len(valid_idx):
-        combined = sorted(zip(new_idx, new_vals))
-        valid_idx = np.array([x[0] for x in combined])
-        valid_vals = np.array([x[1] for x in combined])
-    
-    # 🔥 V4 Experiment: Use PCHIP interpolation to avoid flat bottoms and overshoots
-    from scipy.interpolate import PchipInterpolator
-    if len(valid_idx) >= 4:
-        try:
-            f = PchipInterpolator(valid_idx, valid_vals, extrapolate=True)
-            interpolated_pitch = f(full_idx)
-        except Exception as e:
-            print(f"PCHIP interpolation failed: {e}. Falling back to linear.")
-            interpolated_pitch = np.interp(full_idx, valid_idx, valid_vals)
+    # If energy_thresh is provided, set pitch to 0.0 for frames below threshold
+    if energy_thresh is not None and energy_thresh > 0:
+        pitch[energy < energy_thresh] = 0.0
+
+    # Optional continuous voiced duration check
+    if min_voiced_ms is not None and len(pitch) > 0:
+        frame_duration_ms = (len(y) / sr * 1000.0) / len(pitch)
+        longest_run = 0
+        current_run = 0
+        for is_voiced in (pitch > 0):
+            if is_voiced:
+                current_run += 1
+                if current_run > longest_run:
+                    longest_run = current_run
+            else:
+                current_run = 0
+        max_voiced_duration_ms = longest_run * frame_duration_ms
+        if max_voiced_duration_ms < min_voiced_ms:
+            return [0] * target_len
+
+    # 2. Find boundaries using find_voiced_region_v4 (energy-based)
+    start_idx, end_idx = find_voiced_region_v4(pitch, energy, energy_thresh=energy_thresh, onset_frames=onset_frames, offset_frames=offset_frames, ignore_start_frames=ignore_start_frames)
+
+    # If no voiced points are found in the region, return zero curve
+    nonzero_idx = np.where(pitch[start_idx:end_idx+1] > 0)[0]
+    valid_pitch_count_after_crop = len(nonzero_idx)
+
+    if valid_pitch_count_after_crop < 10:
+        res_curve = [0] * target_len
     else:
-        interpolated_pitch = np.interp(full_idx, valid_idx, valid_vals)
-    
-    smoothed_pitch = scipy.signal.medfilt(interpolated_pitch, kernel_size=kernel_size)
-    
-    try:
-        win_len = min(11, len(smoothed_pitch))
-        if win_len % 2 == 0: win_len -= 1
-        if win_len >= 5:
-            smoothed_pitch = scipy.signal.savgol_filter(smoothed_pitch, window_length=win_len, polyorder=2)
-    except Exception as e:
-        print(f"Savgol filter failed: {e}")
-    
-    p_log = np.log2(smoothed_pitch)
-    p_min, p_max = np.log2(65), np.log2(400)
-    norm_pitch = (p_log - p_min) / (p_max - p_min) * 100
-    
-    inspect_len = min(leading_plateau_window, len(norm_pitch))
-    if inspect_len > 10:
-        diffs = np.diff(norm_pitch[:inspect_len])
-        large_jumps = np.where(diffs > plateau_jump_threshold)[0]
-        
-        if len(large_jumps) > 0:
-            jump_idx = large_jumps[0]
-            plateau = norm_pitch[:jump_idx + 1]
-            low_threshold = np.percentile(norm_pitch, plateau_low_percentile_threshold)
-            is_low = np.mean(plateau) < low_threshold
-            is_flat = np.std(plateau) < 5.0
-            has_enough_left = (len(norm_pitch) - (jump_idx + 1)) >= min_points_after_trim
-            
-            if is_low and is_flat and has_enough_left:
-                norm_pitch = norm_pitch[jump_idx + 1:]
+        trimmed_pitch = pitch[start_idx:end_idx+1]
 
-    xp = np.linspace(0, len(norm_pitch) - 1, target_len)
-    final_curve = np.interp(xp, np.arange(len(norm_pitch)), norm_pitch)
-    
-    return final_curve.tolist()
+        # 3. Interpolate internal silences (using cubic spline, matching V3 behavior)
+        valid_mask = trimmed_pitch > 0
+        valid_idx = np.where(valid_mask)[0]
+        valid_vals = trimmed_pitch[valid_mask]
+
+        if len(valid_vals) < 5:
+            res_curve = [0] * target_len
+        else:
+            full_idx = np.arange(len(trimmed_pitch))
+
+            from scipy.interpolate import interp1d
+            if len(valid_idx) >= 4:
+                try:
+                    f = interp1d(valid_idx, valid_vals, kind='cubic', bounds_error=False, fill_value="extrapolate")
+                    interpolated_pitch = f(full_idx)
+                except Exception as e:
+                    print(f"Cubic interpolation failed in V4: {e}. Falling back to linear.")
+                    interpolated_pitch = np.interp(full_idx, valid_idx, valid_vals)
+            else:
+                interpolated_pitch = np.interp(full_idx, valid_idx, valid_vals)
+
+            # 4. Smooth using median filter
+            smoothed_pitch = scipy.signal.medfilt(interpolated_pitch, kernel_size=kernel_size)
+
+            # Savitzky-Golay filter
+            try:
+                win_len = min(11, len(smoothed_pitch))
+                if win_len % 2 == 0: win_len -= 1
+                if win_len >= 5:
+                    smoothed_pitch = scipy.signal.savgol_filter(smoothed_pitch, window_length=win_len, polyorder=2)
+            except Exception as e:
+                print(f"Savgol filter failed in V4: {e}")
+
+            # 5. Normalized log scale
+            p_log = np.log2(smoothed_pitch)
+            p_min, p_max = np.log2(65), np.log2(400)
+            norm_pitch = (p_log - p_min) / (p_max - p_min) * 100
+
+            # Resample to target_len
+            xp = np.linspace(0, len(norm_pitch) - 1, target_len)
+            final_curve = np.interp(xp, np.arange(len(norm_pitch)), norm_pitch)
+            res_curve = final_curve.tolist()
+
+    # V4 DEBUG PRINTING
+    is_all_zeros = all(val == 0.0 for val in res_curve)
+    curve_min = min(res_curve) if len(res_curve) > 0 else 0.0
+    curve_max = max(res_curve) if len(res_curve) > 0 else 0.0
+
+    print(f"[V4 BACKEND DEBUG] ignore_start_frames: {ignore_start_frames}")
+    print(f"[V4 BACKEND DEBUG] energy_thresh: {energy_thresh}")
+    print(f"[V4 BACKEND DEBUG] onset_frames: {onset_frames}")
+    print(f"[V4 BACKEND DEBUG] offset_frames: {offset_frames}")
+    print(f"[V4 BACKEND DEBUG] conf_thresh: {conf_thresh}")
+    print(f"[V4 BACKEND DEBUG] min_freq: {min_freq}")
+    print(f"[V4 BACKEND DEBUG] original pitch length: {len(pitch)}")
+    print(f"[V4 BACKEND DEBUG] start_idx: {start_idx}, end_idx: {end_idx}")
+    print(f"[V4 BACKEND DEBUG] cropped pitch length: {end_idx - start_idx + 1}")
+    print(f"[V4 BACKEND DEBUG] valid pitch count after crop: {valid_pitch_count_after_crop}")
+    print(f"[V4 BACKEND DEBUG] final curve min/max: {curve_min:.2f} / {curve_max:.2f}")
+    print(f"[V4 BACKEND DEBUG] whether final curve is all zeros: {is_all_zeros}")
+
+    return res_curve
 
 # =========================
 # 🔥 評分系統
@@ -609,7 +791,15 @@ async def get_audio_curve_v3(audio_bytes: bytes, filename: str, conf_thresh: flo
             os.remove(temp_wav)
         return [0] * 300
 
-async def get_audio_curve_v4(audio_bytes: bytes, filename: str):
+async def get_audio_curve_v4(
+    audio_bytes: bytes,
+    filename: str,
+    conf_thresh: float = 0.55,
+    min_freq: float = 50.0,
+    energy_thresh: Optional[float] = None,
+    min_voiced_ms: Optional[float] = None,
+    ignore_start_frames: int = 50
+):
     temp_input = f"temp_input_v4_{os.getpid()}_{filename}"
     temp_wav = f"temp_output_v4_{os.getpid()}.wav"
 
@@ -622,7 +812,14 @@ async def get_audio_curve_v4(audio_bytes: bytes, filename: str):
 
         y, sr = librosa.load(temp_wav, sr=16000)
 
-        curve = process_f0_v4(y, sr)
+        curve = process_f0_v4(
+            y, sr,
+            conf_thresh=conf_thresh,
+            min_freq=min_freq,
+            energy_thresh=energy_thresh,
+            min_voiced_ms=min_voiced_ms,
+            ignore_start_frames=ignore_start_frames
+        )
 
         if os.path.exists(temp_input):
             os.remove(temp_input)
@@ -975,10 +1172,25 @@ async def get_pitch_v2(file: UploadFile = File(...)):
         return [0] * 300
 
 @app.post("/get_pitch_v4")
-async def get_pitch_v4(file: UploadFile = File(...)):
+async def get_pitch_v4(
+    file: UploadFile = File(...),
+    conf_thresh: Optional[float] = 0.55,
+    min_freq: Optional[float] = 50.0,
+    energy_thresh: Optional[float] = None,
+    min_voiced_ms: Optional[float] = None,
+    ignore_start_frames: Optional[int] = 50
+):
     try:
         audio_bytes = await file.read()
-        curve = await get_audio_curve_v4(audio_bytes, file.filename)
+        curve = await get_audio_curve_v4(
+            audio_bytes,
+            file.filename,
+            conf_thresh=conf_thresh,
+            min_freq=min_freq,
+            energy_thresh=energy_thresh,
+            min_voiced_ms=min_voiced_ms,
+            ignore_start_frames=ignore_start_frames
+        )
         return curve
     except Exception as e:
         print("pitch v4 error:", e)
@@ -1039,6 +1251,39 @@ async def get_pitch_from_url_v3(req: UrlRequest):
         return curve
     except Exception as e:
         print("pitch_from_url_v3 error:", e)
+        return [0] * 300
+
+@app.post("/get_pitch_from_url_v4")
+async def get_pitch_from_url_v4(
+    req: UrlRequest,
+    conf_thresh: Optional[float] = 0.55,
+    min_freq: Optional[float] = 50.0,
+    energy_thresh: Optional[float] = None,
+    min_voiced_ms: Optional[float] = None,
+    ignore_start_frames: Optional[int] = 50
+):
+    try:
+        response = requests.get(req.audio_url)
+        if response.status_code != 200:
+            raise HTTPException(status_code=400, detail=f"Failed to download audio from URL. Status: {response.status_code}")
+        
+        audio_bytes = response.content
+        filename = req.audio_url.split('/')[-1].split('?')[0]
+        if not filename:
+            filename = "baseline.mp4"
+            
+        curve = await get_audio_curve_v4(
+            audio_bytes,
+            filename,
+            conf_thresh=conf_thresh,
+            min_freq=min_freq,
+            energy_thresh=energy_thresh,
+            min_voiced_ms=min_voiced_ms,
+            ignore_start_frames=ignore_start_frames
+        )
+        return curve
+    except Exception as e:
+        print("pitch_from_url_v4 error:", e)
         return [0] * 300
 
 # =========================
