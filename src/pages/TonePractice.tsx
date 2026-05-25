@@ -20,6 +20,7 @@ export default function TonePractice() {
   const studentId = routeStudentId || db.getCurrentUserId();
   const [practiceQueue, setPracticeQueue] = useState<{ item: LearningItem, record: StudentLearningRecord, task: GeneratedTask }[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
+  const [viewMode, setViewMode] = useState<'practice' | 'overview'>('practice');
 
   // Self Test states
   const [typedAnswer, setTypedAnswer] = useState('');
@@ -264,10 +265,9 @@ export default function TonePractice() {
   };
 
   const RATING_OPTIONS = [
-    { rating: 1, label: "Not familiar yet" },
-    { rating: 2, label: "Getting better" },
-    { rating: 3, label: "Good" },
-    { rating: 4, label: "Very confident" }
+    { rating: 1, label: "Not yet" },
+    { rating: 2, label: "OK" },
+    { rating: 3, label: "Good" }
   ];
 
   const handleSaveAndNext = async () => {
@@ -1102,28 +1102,28 @@ export default function TonePractice() {
 
     return (
       <>
-        <div style={{ padding: '1.5rem', background: '#f0fdf4', borderRadius: '12px', border: '1px solid #bbf7d0', textAlign: 'center', margin: '1rem 0' }}>
-          <h3 style={{ color: '#166534', marginBottom: '1rem' }}>Tone practice recorded</h3>
+        <div style={{ padding: '1rem', background: '#f0fdf4', borderRadius: '12px', border: '1px solid #bbf7d0', textAlign: 'center', margin: '0.75rem 0' }}>
+          <h3 style={{ color: '#166534', margin: '0 0 0.75rem 0', fontSize: '1.1rem', fontWeight: 'bold' }}>Tone practice recorded</h3>
 
-          <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap', marginBottom: '1.5rem' }}>
-            <button className="btn btn-outline" style={{ background: '#fff' }} onClick={playTargetAudio}>🔊 Play Target Audio</button>
+          {/* Compact Audio Buttons */}
+          <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center', marginBottom: '0.75rem' }}>
+            <button className="btn btn-outline" style={{ background: '#fff', padding: '0.4rem 0.8rem', fontSize: '0.85rem' }} onClick={playTargetAudio}>Target</button>
             {recordedBlobUrl && (
-              <button className="btn btn-outline" style={{ background: '#fff' }} onClick={playRecording}>▶️ Play</button>
+              <button className="btn btn-outline" style={{ background: '#fff', padding: '0.4rem 0.8rem', fontSize: '0.85rem' }} onClick={playRecording}>Play</button>
             )}
-            <button className="btn btn-outline" style={{ background: '#fff' }} onClick={handleReRecord}>🔄 Re-record</button>
+            <button className="btn btn-outline" style={{ background: '#fff', padding: '0.4rem 0.8rem', fontSize: '0.85rem' }} onClick={handleReRecord}>Retry</button>
           </div>
 
-          {/* 5. Self Rating Section */}
-          <div style={{ borderTop: '1px solid #bbf7d0', paddingTop: '1rem', marginTop: '1rem' }}>
-            <p style={{ fontWeight: 'bold', color: '#166534', marginBottom: '0.75rem', fontSize: '0.95rem' }}>
-              How do you feel about this attempt?
+          {/* Self Rating Section */}
+          <div style={{ borderTop: '1px solid #bbf7d0', paddingTop: '0.75rem', marginTop: '0.75rem' }}>
+            <p style={{ fontWeight: 'bold', color: '#166534', marginBottom: '0.5rem', fontSize: '0.9rem' }}>
+              How do you feel?
             </p>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.75rem', maxWidth: '400px', margin: '0 auto' }}>
+            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center', maxWidth: '360px', margin: '0 auto' }}>
               {[
-                { rating: 1, label: "🔴 Not familiar yet", color: '#fee2e2', border: '#fca5a5', text: '#991b1b' },
-                { rating: 2, label: "🟡 Getting better", color: '#fef3c7', border: '#fcd34d', text: '#92400e' },
-                { rating: 3, label: "🟢 Good", color: '#dcfce7', border: '#86efac', text: '#166534' },
-                { rating: 4, label: "🔵 Very confident", color: '#dbeafe', border: '#93c5fd', text: '#1e40af' }
+                { rating: 1, label: "🔴 Not yet", color: '#fee2e2', border: '#fca5a5', text: '#991b1b' },
+                { rating: 2, label: "🟡 OK", color: '#fef3c7', border: '#fcd34d', text: '#92400e' },
+                { rating: 3, label: "🟢 Good", color: '#dcfce7', border: '#86efac', text: '#166534' }
               ].map(opt => {
                 const isSelected = selectedRating === opt.rating;
                 return (
@@ -1131,7 +1131,8 @@ export default function TonePractice() {
                     key={opt.rating}
                     type="button"
                     style={{
-                      padding: '0.6rem 0.4rem',
+                      flex: 1,
+                      padding: '0.4rem 0.5rem',
                       borderRadius: '8px',
                       border: isSelected ? `2px solid ${opt.text}` : `1px solid ${opt.border}`,
                       background: isSelected ? opt.color : '#fff',
@@ -1139,9 +1140,7 @@ export default function TonePractice() {
                       fontSize: '0.85rem',
                       fontWeight: isSelected ? 'bold' : 'normal',
                       cursor: 'pointer',
-                      transform: isSelected ? 'scale(1.02)' : 'none',
                       transition: 'all 0.15s ease',
-                      boxShadow: isSelected ? '0 2px 4px rgba(0,0,0,0.1)' : 'none'
                     }}
                     onClick={() => setSelectedRating(opt.rating)}
                   >
@@ -1151,6 +1150,17 @@ export default function TonePractice() {
               })}
             </div>
           </div>
+
+          {/* Subtle AI Score Reference */}
+          {(isScoringLoading || matchScore !== null) && (
+            <div style={{ marginTop: '0.75rem', fontSize: '0.85rem', color: '#475569' }}>
+              {isScoringLoading ? (
+                <span>⏳ Calculating score...</span>
+              ) : (
+                <span>AI score: <span style={{ fontWeight: 'bold' }}>{matchScore !== null ? matchScore.toFixed(1) : '-'}</span></span>
+              )}
+            </div>
+          )}
         </div>
 
         {validationError && (
@@ -1188,9 +1198,71 @@ export default function TonePractice() {
     );
   };
 
+  const renderOverview = () => {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', width: '100%', maxWidth: '600px', margin: '0 auto' }}>
+        {practiceQueue.map((pair, idx) => {
+          const { item } = pair;
+          const focusText = item.focusExpression || '';
+          const pinyin = (item as any).pronunciation || '';
+
+          return (
+            <div
+              key={item.id}
+              onClick={() => {
+                setCurrentIndex(idx);
+                setViewMode('practice');
+                resetToneStates();
+              }}
+              style={{
+                border: '1px solid var(--border)',
+                borderRadius: '12px',
+                padding: '1rem',
+                background: '#fff',
+                cursor: 'pointer',
+                transition: 'transform 0.15s ease, box-shadow 0.15s ease',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '1rem',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = 'translateY(-2px)';
+                e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0,0,0,0.05)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = 'none';
+                e.currentTarget.style.boxShadow = 'none';
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <span style={{ fontSize: '0.85rem', fontWeight: 'bold', color: 'var(--text-muted)', minWidth: '40px' }}>
+                  {idx + 1} / {practiceQueue.length}
+                </span>
+                <div>
+                  <div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: 'var(--primary)' }}>
+                    {focusText}
+                  </div>
+                  {pinyin && (
+                    <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
+                      {pinyin}
+                    </div>
+                  )}
+                </div>
+              </div>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                Click to practice &rarr;
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
   return (
     <div style={{ maxWidth: '600px', margin: '2rem auto' }}>
-      <div style={{ marginBottom: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div style={{ marginBottom: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
         <div>
           <button
             className="btn btn-outline"
@@ -1201,11 +1273,54 @@ export default function TonePractice() {
           </button>
           <h1 style={{ margin: '0.5rem 0 0' }}>Tone Practice</h1>
         </div>
-        <span className="status-badge" style={{ background: '#f1f5f9' }}>{currentIndex + 1} / {practiceQueue.length}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <div style={{ display: 'flex', background: '#e2e8f0', padding: '0.2rem', borderRadius: '8px' }}>
+            <button
+              onClick={() => setViewMode('practice')}
+              style={{
+                padding: '0.35rem 0.8rem',
+                fontSize: '0.8rem',
+                borderRadius: '6px',
+                border: 'none',
+                cursor: 'pointer',
+                background: viewMode === 'practice' ? '#fff' : 'transparent',
+                color: viewMode === 'practice' ? 'var(--primary)' : 'var(--text-muted)',
+                fontWeight: viewMode === 'practice' ? 'bold' : '500',
+                boxShadow: viewMode === 'practice' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                transition: 'all 0.2s',
+              }}
+            >
+              Practice
+            </button>
+            <button
+              onClick={() => setViewMode('overview')}
+              style={{
+                padding: '0.35rem 0.8rem',
+                fontSize: '0.8rem',
+                borderRadius: '6px',
+                border: 'none',
+                cursor: 'pointer',
+                background: viewMode === 'overview' ? '#fff' : 'transparent',
+                color: viewMode === 'overview' ? 'var(--primary)' : 'var(--text-muted)',
+                fontWeight: viewMode === 'overview' ? 'bold' : '500',
+                boxShadow: viewMode === 'overview' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                transition: 'all 0.2s',
+              }}
+            >
+              Overview
+            </button>
+          </div>
+          {viewMode === 'practice' && (
+            <span className="status-badge" style={{ background: '#f1f5f9' }}>{currentIndex + 1} / {practiceQueue.length}</span>
+          )}
+        </div>
       </div>
 
 
-      <div style={{ textAlign: 'center' }}>
+      {viewMode === 'overview' ? (
+        renderOverview()
+      ) : (
+        <div style={{ textAlign: 'center' }}>
         <div style={{ marginBottom: '2rem', background: '#f8fafc', padding: '1.25rem', borderRadius: '16px', border: '1px solid var(--border)', display: 'flex', flexWrap: 'wrap', gap: '1.5rem', justifyContent: 'center', alignItems: 'flex-end' }}>
           <div style={{ flex: '1', minWidth: '150px' }}>
             <p style={{ margin: '0 0 0.5rem', fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Prompt Mode</p>
@@ -1475,7 +1590,8 @@ export default function TonePractice() {
             </button>
           </div>
         </div>
-      </div>
+        </div>
+      )}
 
     </div>
   );

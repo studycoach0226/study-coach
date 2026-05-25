@@ -31,6 +31,20 @@ function parseAssignedRange(rangeStr: string): string[] {
   return codes;
 }
 
+const getReflectionDisplay = (rating: number, label: string) => {
+  const l = (label || '').toLowerCase();
+  if (l.includes('not yet') || l.includes('not familiar') || rating === 1) {
+    return '🔴 Not yet';
+  }
+  if (l.includes('ok') || l.includes('getting better') || rating === 2) {
+    return '🟡 OK';
+  }
+  if (l.includes('good') || l.includes('confident') || rating === 3 || rating === 4) {
+    return '🟢 Good';
+  }
+  return '-';
+};
+
 type GroupedReadingReport = {
   articleCode: string;
   title: string;
@@ -39,12 +53,23 @@ type GroupedReadingReport = {
   attempts: ReadingReportItem[];
 };
 
-type WordStat = {
+
+
+type FlashcardStat = {
   item: LearningItem;
   record: StudentLearningRecord;
   attempts: Attempt[];
   accuracy: number;
   latest: Attempt | null;
+};
+
+type ToneStat = {
+  item: LearningItem;
+  record: StudentLearningRecord;
+  attempts: any[];
+  bestScore: number | null;
+  latestScore: number | null;
+  latest: any | null;
 };
 
 type ReadingReportItem = {
@@ -63,57 +88,24 @@ type WeeklyReadingGoal = {
   remainingToday: number;
 };
 
-function ExpandableRow({ stat }: { stat: WordStat }) {
+function FlashcardExpandableRow({ stat }: { stat: FlashcardStat }) {
   const [expanded, setExpanded] = useState(false);
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'completed':
-        return { bg: '#d1fae5', color: '#059669', label: 'Mastered' };
-      case 'weak':
-        return { bg: '#fee2e2', color: '#dc2626', label: 'Weak' };
-      case 'practicing':
-      case 'learning':
-        return { bg: '#e0f2fe', color: '#0284c7', label: 'Practicing' };
-      default:
-        return { bg: '#f1f5f9', color: '#475569', label: 'Pending' };
-    }
-  };
-
-  const getToneRatingDisplay = (rating: number, selfRatingLabel?: string) => {
-    switch (rating) {
-      case 1:
-        return { text: '🔴 Needs Review', color: '#dc2626' };
-      case 2:
-        return { text: '🟡 Improving', color: '#d97706' };
-      case 3:
-        return { text: '🟢 Good', color: '#059669' };
-      case 4:
-        return { text: '🌟 Confident', color: '#2563eb' };
-      default:
-        if (selfRatingLabel) {
-          const label = selfRatingLabel.toLowerCase();
-          if (label.includes('not familiar')) return { text: '🔴 Needs Review', color: '#dc2626' };
-          if (label.includes('better')) return { text: '🟡 Improving', color: '#d97706' };
-          if (label.includes('good')) return { text: '🟢 Good', color: '#059669' };
-          if (label.includes('confident')) return { text: '🌟 Confident', color: '#2563eb' };
-        }
-        return { text: 'Tone Practice', color: 'var(--text-main)' };
+  const getEncodingDisplay = (completed: boolean) => {
+    if (completed) {
+      return { bg: '#d1fae5', color: '#059669', label: 'Done' };
+    } else {
+      return { bg: '#f1f5f9', color: '#475569', label: 'Pending / Not Yet' };
     }
   };
 
   const getLatestText = (latest: any) => {
-    if (!latest) return 'No attempts';
+    if (!latest) return 'No tests';
     const dateStr = new Date(latest.date).toLocaleDateString();
-    if (latest.mode === 'tonePractice') {
-      const display = getToneRatingDisplay(latest.selfRating, latest.selfRatingLabel);
-      const icon = display.text.split(' ')[0];
-      return `${dateStr} ${icon}`;
-    }
     return `${dateStr} ${latest.passed ? '✅' : '❌'}`;
   };
 
-  const sColor = getStatusColor(stat.record.status);
+  const encoding = getEncodingDisplay(!!stat.record.encodingCompleted);
   const accuracyText = stat.attempts.length > 0 ? `${Math.round(stat.accuracy * 100)}%` : '-';
   const latestText = getLatestText(stat.latest);
 
@@ -137,7 +129,8 @@ function ExpandableRow({ stat }: { stat: WordStat }) {
           background: expanded ? '#f8fafc' : '#fff',
         }}
       >
-        <div style={{ flex: '1', display: 'flex', alignItems: 'center', gap: '1rem' }}>
+        {/* Word column */}
+        <div style={{ flex: '1.2', display: 'flex', alignItems: 'center', gap: '1rem' }}>
           <span
             style={{
               fontSize: '1.2rem',
@@ -148,37 +141,45 @@ function ExpandableRow({ stat }: { stat: WordStat }) {
           >
             {stat.item.focusExpression}
           </span>
+        </div>
+
+        {/* Encoding column */}
+        <div style={{ flex: '1', textAlign: 'center' }}>
           <span
             style={{
               fontSize: '0.85rem',
-              color: sColor.color,
-              background: sColor.bg,
+              color: encoding.color,
+              background: encoding.bg,
               padding: '0.25rem 0.5rem',
               borderRadius: '4px',
               fontWeight: 'bold',
+              display: 'inline-block',
             }}
           >
-            {sColor.label}
+            {encoding.label}
           </span>
         </div>
 
+        {/* Retrieval column */}
         <div style={{ flex: '1', textAlign: 'center', color: 'var(--text-main)', fontSize: '0.95rem' }}>
           {stat.attempts.length}
         </div>
 
+        {/* Accuracy column */}
         <div
           style={{
             flex: '1',
             textAlign: 'center',
             color: 'var(--text-main)',
             fontSize: '0.95rem',
-            fontWeight: stat.accuracy >= 0.8 ? 'bold' : 'normal',
+            fontWeight: stat.accuracy >= 0.8 && stat.attempts.length > 0 ? 'bold' : 'normal',
           }}
         >
           {accuracyText}
         </div>
 
-        <div style={{ flex: '1', textAlign: 'right', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+        {/* Latest Test column */}
+        <div style={{ flex: '1.2', textAlign: 'right', color: 'var(--text-muted)', fontSize: '0.9rem', paddingRight: '1rem' }}>
           {latestText}
         </div>
 
@@ -195,11 +196,11 @@ function ExpandableRow({ stat }: { stat: WordStat }) {
               textTransform: 'uppercase',
             }}
           >
-            Attempt History
+            Self-Test History
           </h4>
           {stat.attempts.length === 0 ? (
             <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>
-              No historical records available.
+              No self-test records available.
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
@@ -219,20 +220,129 @@ function ExpandableRow({ stat }: { stat: WordStat }) {
                   <span style={{ color: 'var(--text-muted)' }}>
                     {stat.attempts.length - idx}. {new Date(a.date).toLocaleString()}
                   </span>
-                  {(a as any).mode === 'tonePractice' ? (
-                    (() => {
-                      const display = getToneRatingDisplay((a as any).selfRating, (a as any).selfRatingLabel);
-                      return (
-                        <span style={{ fontWeight: 'bold', color: display.color }}>
-                          {display.text}
-                        </span>
-                      );
-                    })()
-                  ) : (
-                    <span style={{ fontWeight: 'bold', color: a.passed ? '#059669' : '#dc2626' }}>
-                      {a.passed ? '✅ Passed' : '❌ Failed'}
+                  <span style={{ fontWeight: 'bold', color: a.passed ? '#059669' : '#dc2626' }}>
+                    {a.passed ? '✅ Passed' : '❌ Failed'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ToneExpandableRow({ stat }: { stat: ToneStat }) {
+  const [expanded, setExpanded] = useState(false);
+
+  const getLatestText = (latest: any) => {
+    if (!latest) return '—';
+    return new Date(latest.date).toLocaleDateString();
+  };
+
+  const latestScoreText = stat.latestScore !== null ? `${stat.latestScore.toFixed(1)}` : '—';
+  const latestPracticeText = getLatestText(stat.latest);
+
+  return (
+    <div
+      style={{
+        border: '1px solid var(--border)',
+        borderRadius: '8px',
+        marginBottom: '0.5rem',
+        background: '#fff',
+        overflow: 'hidden',
+      }}
+    >
+      <div
+        onClick={() => setExpanded(!expanded)}
+        style={{
+          padding: '1rem',
+          display: 'flex',
+          alignItems: 'center',
+          cursor: 'pointer',
+          background: expanded ? '#f8fafc' : '#fff',
+        }}
+      >
+        {/* Tone Card column */}
+        <div style={{ flex: '1.2', display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <span
+            style={{
+              fontSize: '1.2rem',
+              fontWeight: 'bold',
+              color: 'var(--primary)',
+              minWidth: '120px',
+            }}
+          >
+            {stat.item.focusExpression}
+          </span>
+        </div>
+
+        {/* Attempts column */}
+        <div style={{ flex: '0.8', textAlign: 'center', color: 'var(--text-main)', fontSize: '0.95rem' }}>
+          {stat.attempts.length}
+        </div>
+
+        {/* Reflection column */}
+        <div style={{ flex: '1.2', textAlign: 'center', color: 'var(--text-main)', fontSize: '0.95rem' }}>
+          {stat.attempts.length > 0 ? getReflectionDisplay(stat.attempts[0].selfRating, stat.attempts[0].selfRatingLabel) : '—'}
+        </div>
+
+        {/* Latest Practice column */}
+        <div style={{ flex: '1.2', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+          {latestPracticeText}
+        </div>
+
+        {/* AI Ref. column */}
+        <div style={{ flex: '1', textAlign: 'right', color: 'var(--text-muted)', fontSize: '0.85rem', paddingRight: '1.5rem', fontWeight: '500' }}>
+          {latestScoreText}
+        </div>
+
+        <div style={{ paddingLeft: '1rem', color: 'var(--text-muted)' }}>{expanded ? '▲' : '▼'}</div>
+      </div>
+
+      {expanded && (
+        <div style={{ padding: '1rem', background: '#fafafa', borderTop: '1px solid var(--border)' }}>
+          <h4
+            style={{
+              margin: '0 0 1rem 0',
+              fontSize: '0.9rem',
+              color: 'var(--text-muted)',
+              textTransform: 'uppercase',
+            }}
+          >
+            Tone Practice History
+          </h4>
+          {stat.attempts.length === 0 ? (
+            <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>
+              No practice records available.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              {stat.attempts.map((a, idx) => (
+                <div
+                  key={a.id}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    padding: '0.5rem',
+                    background: '#fff',
+                    borderRadius: '4px',
+                    border: '1px solid #e2e8f0',
+                    fontSize: '0.9rem',
+                  }}
+                >
+                  <span style={{ color: 'var(--text-muted)' }}>
+                    {stat.attempts.length - idx}. {new Date(a.date).toLocaleString()}
+                  </span>
+                  <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                    <span style={{ color: 'var(--text-main)', fontWeight: '500' }}>
+                      Reflection: {getReflectionDisplay(a.selfRating, a.selfRatingLabel)}
                     </span>
-                  )}
+                    <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                      AI Ref.: <span style={{ fontWeight: 'bold' }}>{a.score !== null && a.score !== undefined ? a.score.toFixed(1) : '-'}</span>
+                    </span>
+                  </div>
                 </div>
               ))}
             </div>
@@ -357,10 +467,37 @@ function ReadingHistoryExpandableRow({ group }: { group: GroupedReadingReport })
 export default function ReportCard() {
   const navigate = useNavigate();
 
+  // Load preferences from localStorage if exists
+  const getInitialPreference = (key: string, defaultValue: boolean): boolean => {
+    try {
+      const saved = localStorage.getItem(`report_pref_${key}`);
+      return saved !== null ? JSON.parse(saved) : defaultValue;
+    } catch {
+      return defaultValue;
+    }
+  };
+
+  const [showFlashcards, setShowFlashcards] = useState(() => getInitialPreference('flashcards', true));
+  const [showTonePractice, setShowTonePractice] = useState(() => getInitialPreference('tonePractice', true));
+  const [showReading, setShowReading] = useState(() => getInitialPreference('reading', true));
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saved'>('idle');
+
+  const handleSavePreferences = () => {
+    try {
+      localStorage.setItem('report_pref_flashcards', JSON.stringify(showFlashcards));
+      localStorage.setItem('report_pref_tonePractice', JSON.stringify(showTonePractice));
+      localStorage.setItem('report_pref_reading', JSON.stringify(showReading));
+      setSaveStatus('saved');
+      setTimeout(() => setSaveStatus('idle'), 1500);
+    } catch (e) {
+      console.error('[DEBUG] Failed to save preferences:', e);
+    }
+  };
+
   const [stats, setStats] = useState({ totalAttempts: 0, onboardedCount: 0 });
-  const [wordStats, setWordStats] = useState<WordStat[]>([]);
+  const [flashcardStats, setFlashcardStats] = useState<FlashcardStat[]>([]);
+  const [toneStats, setToneStats] = useState<ToneStat[]>([]);
   const [filter, setFilter] = useState<'all' | 'completed' | 'practicing' | 'weak'>('all');
-  const [reportMode, setReportMode] = useState<'all' | 'flashcard' | 'reading'>('all');
 
   const [weeklyReadingGoal, setWeeklyReadingGoal] = useState<WeeklyReadingGoal>({
     weekRange: '-',
@@ -385,57 +522,100 @@ export default function ReportCard() {
         
         const cloudPairs = cloudDocs.map(doc => mapFirestoreToLocal(doc));
         
-        let totalOnboarded = 0;
-        let totalRetrievalAttempts = 0;
-
-        const computed: WordStat[] = cloudPairs.map(({ item, record }) => {
-          if (record.encodingCompleted) totalOnboarded++;
-          
+        // 1. Calculate Flashcard stats (Self-test only)
+        const computedFlashcards: FlashcardStat[] = cloudPairs.map(({ item, record }) => {
           const history = (record as any).retrievalHistory || [];
-          totalRetrievalAttempts += (record as any).retrievalCount || 0;
+          
+          const selfTestAttempts: Attempt[] = history
+            .filter((h: any) => h.practiceMode === 'selfTest')
+            .map((h: any) => ({
+              id: h.attemptId || `att_${Date.now()}_${Math.random()}`,
+              wordId: record.learningItemId,
+              studentId: record.studentId,
+              date: h.createdAt,
+              passed: h.isCorrect,
+              mode: h.practiceMode || 'selfTest',
+              typedAnswer: h.studentAnswer || '',
+              expectedAnswer: h.expectedAnswer || '',
+              usedHint: false,
+            }))
+            .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
-          // Map retrievalHistory entries back to Attempt structure
-          const attempts: Attempt[] = history.map((h: any) => ({
-            id: h.attemptId || `att_${Date.now()}_${Math.random()}`,
-            wordId: record.learningItemId,
-            studentId: record.studentId,
-            date: h.createdAt,
-            passed: h.isCorrect,
-            mode: h.practiceMode || 'flashcard',
-            typedAnswer: h.studentAnswer || '',
-            expectedAnswer: h.expectedAnswer || '',
-            usedHint: false,
-            selfRating: h.selfRating,
-            selfRatingLabel: h.selfRatingLabel
-          })).sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
-
-          console.log(`[DEBUG] Card: ${item.focusExpression}, retrievalCount: ${record.retrievalCount}, historyLength: ${history.length}`);
+          const correctSelfTests = selfTestAttempts.filter(a => a.passed).length;
+          const totalSelfTests = selfTestAttempts.length;
+          const accuracy = totalSelfTests > 0 ? correctSelfTests / totalSelfTests : 0;
 
           return {
             item,
             record,
-            attempts,
-            accuracy: record.retrievalCount && record.retrievalCount > 0 
-              ? (record.correctCount || 0) / record.retrievalCount 
-              : 0,
-            latest: attempts.length > 0 ? attempts[0] : null
+            attempts: selfTestAttempts,
+            accuracy,
+            latest: selfTestAttempts.length > 0 ? selfTestAttempts[0] : null
           };
         });
 
-        computed.sort((a, b) => {
+        // Sort flashcards by latest activity
+        computedFlashcards.sort((a, b) => {
           if (!a.latest && !b.latest) return 0;
           if (!a.latest) return 1;
           if (!b.latest) return -1;
           return new Date(b.latest.date).getTime() - new Date(a.latest.date).getTime();
         });
 
-        console.log(`[DEBUG] ReportCard - Final rendered count: ${computed.length}`);
+        // Calculate summary stats based on flashcard self-tests only
+        let totalOnboarded = 0;
+        let totalRetrievalAttempts = 0;
+        computedFlashcards.forEach(f => {
+          if (f.record.encodingCompleted) totalOnboarded++;
+          totalRetrievalAttempts += f.attempts.length;
+        });
+
+        // 2. Calculate Tone Practice stats
+        const computedTone: ToneStat[] = cloudPairs
+          .filter(({ record }) => {
+            const isEligibleForTone = record.encodingStatus === 'done' || record.encodingCompleted || record.isConnectionBuilt;
+            return isEligibleForTone;
+          })
+          .map(({ item, record }) => {
+            const history = (record as any).retrievalHistory || [];
+            
+            const toneAttempts = history
+              .filter((h: any) => h.practiceMode === 'tonePractice')
+              .map((h: any) => ({
+                id: h.attemptId || `att_${Date.now()}_${Math.random()}`,
+                wordId: record.learningItemId,
+                studentId: record.studentId,
+                date: h.createdAt,
+                isCorrect: h.isCorrect,
+                selfRating: h.selfRating,
+                selfRatingLabel: h.selfRatingLabel,
+                score: h.score
+              }))
+              .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+            const bestScore = toneAttempts.length > 0 
+              ? Math.max(...toneAttempts.map((a: any) => a.score || 0)) 
+              : null;
+            const latestScore = toneAttempts.length > 0 ? toneAttempts[0].score : null;
+
+            return {
+              item,
+              record,
+              attempts: toneAttempts,
+              bestScore,
+              latestScore,
+              latest: toneAttempts.length > 0 ? toneAttempts[0] : null
+            };
+          });
+
+        console.log(`[DEBUG] ReportCard - Flashcards: ${computedFlashcards.length}, Tone cards with history: ${computedTone.length}`);
 
         setStats({
           totalAttempts: totalRetrievalAttempts,
           onboardedCount: totalOnboarded,
         });
-        setWordStats(computed);
+        setFlashcardStats(computedFlashcards);
+        setToneStats(computedTone);
 
       } catch (error) {
         console.error('[DEBUG] ReportCard - Failed to load cloud data:', error);
@@ -496,49 +676,13 @@ export default function ReportCard() {
       });
   }, []);
 
-  const filteredStats = wordStats.filter((s) => {
+  const filteredFlashcardStats = flashcardStats.filter((s) => {
     if (filter === 'all') return true;
     if (filter === 'practicing' && (s.record.status === 'learning' || s.record.status === 'practicing')) {
       return true;
     }
     return s.record.status === filter;
   });
-
-  const assignedCodes = parseAssignedRange(weeklyReadingGoal.assignedRange);
-
-  const groupedReadingReports: GroupedReadingReport[] = assignedCodes.map(code => {
-    const article = allReadingArticles.find(a => a.articleCode === code);
-    const title = article ? article.title : 'Unknown Title';
-
-    // Sort attempts newest first
-    const attempts = readingItems
-      .filter(item => item.articleCode === code)
-      .sort((a, b) => {
-        const timeA = a.completedAt !== '-' ? new Date(a.completedAt).getTime() : 0;
-        const timeB = b.completedAt !== '-' ? new Date(b.completedAt).getTime() : 0;
-        return timeB - timeA;
-      });
-
-    const hasCompleted = attempts.some(a => a.status === 'completed');
-    const completedAttempts = attempts.filter(a => a.status === 'completed');
-
-    const latestCompletedAt = completedAttempts.length > 0
-      ? completedAttempts[0].completedAt
-      : null;
-
-    return {
-      articleCode: code,
-      title,
-      status: hasCompleted ? 'completed' : 'not_done',
-      latestCompletedAt,
-      attempts
-    };
-  });
-
-  const assignedReadingCount = assignedCodes.length;
-  const completedReadingCount = groupedReadingReports.filter(g => g.status === 'completed').length;
-  const calculatedCompletionRate =
-    assignedReadingCount > 0 ? Math.round((completedReadingCount / assignedReadingCount) * 100) : 0;
 
   const renderFlashcardSection = () => (
     <>
@@ -581,7 +725,7 @@ export default function ReportCard() {
               textTransform: 'uppercase',
             }}
           >
-            Retrieval
+            Retrieval Tests
           </h3>
           <p style={{ fontSize: '2.5rem', margin: 0, fontWeight: 800, color: 'var(--primary)' }}>
             {stats.totalAttempts}
@@ -600,7 +744,7 @@ export default function ReportCard() {
             alignItems: 'center',
           }}
         >
-          <h2 style={{ margin: 0 }}>{UI_LABELS.FLASHCARD_HISTORY_TITLE}</h2>
+          <h2 style={{ margin: 0 }}>Flashcard History</h2>
 
           <div
             style={{
@@ -683,19 +827,22 @@ export default function ReportCard() {
               fontSize: '0.85rem',
               fontWeight: 'bold',
               textTransform: 'uppercase',
+              borderBottom: '1px solid var(--border)',
+              marginBottom: '0.75rem',
             }}
           >
-            <div style={{ flex: '1' }}>Word</div>
+            <div style={{ flex: '1.2' }}>Word</div>
+            <div style={{ flex: '1', textAlign: 'center' }}>Encoding</div>
             <div style={{ flex: '1', textAlign: 'center' }}>Retrieval</div>
             <div style={{ flex: '1', textAlign: 'center' }}>Accuracy</div>
-            <div style={{ flex: '1', textAlign: 'right', paddingRight: '2rem' }}>Latest Activity</div>
+            <div style={{ flex: '1.2', textAlign: 'right', paddingRight: '2rem' }}>Latest Test</div>
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column' }}>
-            {filteredStats.map((stat) => (
-              <ExpandableRow key={stat.record.id} stat={stat} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            {filteredFlashcardStats.map((stat) => (
+              <FlashcardExpandableRow key={stat.record.id} stat={stat} />
             ))}
-            {filteredStats.length === 0 && (
+            {filteredFlashcardStats.length === 0 && (
               <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>
                 No words match this filter.
               </div>
@@ -705,6 +852,90 @@ export default function ReportCard() {
       </div>
     </>
   );
+
+  const renderTonePracticeSection = () => (
+    <>
+      <div className="card" style={{ padding: '0', overflow: 'hidden' }}>
+        <div
+          style={{
+            padding: '1.5rem',
+            borderBottom: '1px solid var(--border)',
+            background: '#fefefe',
+          }}
+        >
+          <h2 style={{ margin: 0 }}>Tone Practice History</h2>
+        </div>
+
+        <div style={{ padding: '1.5rem' }}>
+          <div
+            style={{
+              display: 'flex',
+              padding: '0 1rem 0.5rem 1rem',
+              color: 'var(--text-muted)',
+              fontSize: '0.85rem',
+              fontWeight: 'bold',
+              textTransform: 'uppercase',
+              borderBottom: '1px solid var(--border)',
+              marginBottom: '0.75rem',
+            }}
+          >
+            <div style={{ flex: '1.2' }}>Tone Card</div>
+            <div style={{ flex: '0.8', textAlign: 'center' }}>Attempts</div>
+            <div style={{ flex: '1.2', textAlign: 'center' }}>Reflection</div>
+            <div style={{ flex: '1.2', textAlign: 'center' }}>Latest Practice</div>
+            <div style={{ flex: '1', textAlign: 'right', paddingRight: '2.5rem' }}>AI Ref.</div>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            {toneStats.map((stat) => (
+              <ToneExpandableRow key={stat.record.id} stat={stat} />
+            ))}
+            {toneStats.length === 0 && (
+              <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>
+                No tone practice history available.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </>
+  );
+
+  const assignedCodes = parseAssignedRange(weeklyReadingGoal.assignedRange);
+
+  const groupedReadingReports: GroupedReadingReport[] = assignedCodes.map(code => {
+    const article = allReadingArticles.find(a => a.articleCode === code);
+    const title = article ? article.title : 'Unknown Title';
+
+    // Sort attempts newest first
+    const attempts = readingItems
+      .filter(item => item.articleCode === code)
+      .sort((a, b) => {
+        const timeA = a.completedAt !== '-' ? new Date(a.completedAt).getTime() : 0;
+        const timeB = b.completedAt !== '-' ? new Date(b.completedAt).getTime() : 0;
+        return timeB - timeA;
+      });
+
+    const hasCompleted = attempts.some(a => a.status === 'completed');
+    const completedAttempts = attempts.filter(a => a.status === 'completed');
+
+    const latestCompletedAt = completedAttempts.length > 0
+      ? completedAttempts[0].completedAt
+      : null;
+
+    return {
+      articleCode: code,
+      title,
+      status: hasCompleted ? 'completed' : 'not_done',
+      latestCompletedAt,
+      attempts
+    };
+  });
+
+  const assignedReadingCount = assignedCodes.length;
+  const completedReadingCount = groupedReadingReports.filter(g => g.status === 'completed').length;
+  const calculatedCompletionRate =
+    assignedReadingCount > 0 ? Math.round((completedReadingCount / assignedReadingCount) * 100) : 0;
 
   const renderReadingSection = () => (
     <>
@@ -864,7 +1095,6 @@ export default function ReportCard() {
     <div style={{ maxWidth: '1000px', margin: '0 auto', padding: '1rem' }}>
       <button
         onClick={() => navigate(`/student/${db.getCurrentUserId()}`)}
-
         className="btn btn-outline"
         style={{ marginBottom: '2rem', background: '#fff' }}
       >
@@ -876,70 +1106,160 @@ export default function ReportCard() {
           {UI_LABELS.REPORT_TITLE}
         </h1>
         <p style={{ color: 'var(--text-muted)', margin: 0 }}>
-          Review your weekly flashcard and reading performance.
+          Review your weekly performance metrics.
         </p>
       </div>
 
+      {/* Visibility Filters Panel */}
+      {/* Visibility Filters Panel */}
       <div
         style={{
-          display: 'flex',
-          gap: '0.5rem',
-          background: '#f1f5f9',
-          padding: '0.3rem',
-          borderRadius: '10px',
-          width: 'fit-content',
+          background: '#fff',
+          border: '1px solid var(--border)',
+          borderRadius: '12px',
+          padding: '1rem 1.25rem',
           marginBottom: '2rem',
         }}
       >
-        <button
-          onClick={() => setReportMode('all')}
-          style={{
-            background: reportMode === 'all' ? '#fff' : 'transparent',
-            border: 'none',
-            padding: '0.5rem 1rem',
-            borderRadius: '8px',
-            cursor: 'pointer',
-            fontWeight: reportMode === 'all' ? 'bold' : 'normal',
-            color: reportMode === 'all' ? 'var(--text-main)' : 'var(--text-muted)',
-          }}
-        >
-          All
-        </button>
-        <button
-          onClick={() => setReportMode('flashcard')}
-          style={{
-            background: reportMode === 'flashcard' ? '#fff' : 'transparent',
-            border: 'none',
-            padding: '0.5rem 1rem',
-            borderRadius: '8px',
-            cursor: 'pointer',
-            fontWeight: reportMode === 'flashcard' ? 'bold' : 'normal',
-            color: reportMode === 'flashcard' ? '#0284c7' : 'var(--text-muted)',
-          }}
-        >
-          Flashcard
-        </button>
-        <button
-          onClick={() => setReportMode('reading')}
-          style={{
-            background: reportMode === 'reading' ? '#fff' : 'transparent',
-            border: 'none',
-            padding: '0.5rem 1rem',
-            borderRadius: '8px',
-            cursor: 'pointer',
-            fontWeight: reportMode === 'reading' ? 'bold' : 'normal',
-            color: reportMode === 'reading' ? '#059669' : 'var(--text-muted)',
-          }}
-        >
-          Reading
-        </button>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+          <span
+            style={{
+              fontSize: '0.8rem',
+              fontWeight: 'bold',
+              color: 'var(--text-muted)',
+              textTransform: 'uppercase',
+              letterSpacing: '0.05em',
+            }}
+          >
+            Select Report Modules to Display
+          </span>
+          <button
+            onClick={handleSavePreferences}
+            style={{
+              background: '#f1f5f9',
+              border: '1px solid #cbd5e1',
+              color: 'var(--text-main)',
+              padding: '0.25rem 0.6rem',
+              fontSize: '0.75rem',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontWeight: 'bold',
+              transition: 'all 0.2s',
+            }}
+          >
+            {saveStatus === 'saved' ? 'Saved! ✓' : 'Save Preference'}
+          </button>
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem' }}>
+          {/* Flashcards Toggle */}
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              background: showFlashcards ? '#eff6ff' : '#fff',
+              border: `1px solid ${showFlashcards ? '#bfdbfe' : 'var(--border)'}`,
+              color: showFlashcards ? '#1e40af' : 'var(--text-muted)',
+              padding: '0.4rem 1rem',
+              borderRadius: '999px',
+              cursor: 'pointer',
+              fontWeight: 500,
+              fontSize: '0.85rem',
+              transition: 'all 0.2s ease',
+              userSelect: 'none',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={showFlashcards}
+              onChange={(e) => setShowFlashcards(e.target.checked)}
+              style={{
+                cursor: 'pointer',
+                accentColor: '#3b82f6',
+                width: '14px',
+                height: '14px',
+              }}
+            />
+            Flashcards
+          </label>
+
+          {/* Tone Practice Toggle */}
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              background: showTonePractice ? '#fdf4ff' : '#fff',
+              border: `1px solid ${showTonePractice ? '#f5d0fe' : 'var(--border)'}`,
+              color: showTonePractice ? '#86198f' : 'var(--text-muted)',
+              padding: '0.4rem 1rem',
+              borderRadius: '999px',
+              cursor: 'pointer',
+              fontWeight: 500,
+              fontSize: '0.85rem',
+              transition: 'all 0.2s ease',
+              userSelect: 'none',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={showTonePractice}
+              onChange={(e) => setShowTonePractice(e.target.checked)}
+              style={{
+                cursor: 'pointer',
+                accentColor: '#d946ef',
+                width: '14px',
+                height: '14px',
+              }}
+            />
+            Tone Practice
+          </label>
+
+          {/* Reading Toggle */}
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              background: showReading ? '#fff7ed' : '#fff',
+              border: `1px solid ${showReading ? '#fed7aa' : 'var(--border)'}`,
+              color: showReading ? '#c2410c' : 'var(--text-muted)',
+              padding: '0.4rem 1rem',
+              borderRadius: '999px',
+              cursor: 'pointer',
+              fontWeight: 500,
+              fontSize: '0.85rem',
+              transition: 'all 0.2s ease',
+              userSelect: 'none',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={showReading}
+              onChange={(e) => setShowReading(e.target.checked)}
+              style={{
+                cursor: 'pointer',
+                accentColor: '#f97316',
+                width: '14px',
+                height: '14px',
+              }}
+            />
+            Reading
+          </label>
+        </div>
       </div>
 
-      {(reportMode === 'all' || reportMode === 'flashcard') && (
+      {showFlashcards && (
         <div style={{ marginBottom: '3rem' }}>{renderFlashcardSection()}</div>
       )}
 
-      {(reportMode === 'all' || reportMode === 'reading') && <div>{renderReadingSection()}</div>}
+      {showTonePractice && (
+        <div style={{ marginBottom: '3rem' }}>{renderTonePracticeSection()}</div>
+      )}
+
+      {showReading && (
+        <div>{renderReadingSection()}</div>
+      )}
     </div>
   );
 }

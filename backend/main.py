@@ -348,7 +348,7 @@ def process_f0_v4(
     kernel_size=3,
     onset_frames=20,
     offset_frames=20,
-    ignore_start_frames=50
+    ignore_start_frames=25
 ):
     """
     New V4: "voiced-region-first green line experiment".
@@ -798,7 +798,7 @@ async def get_audio_curve_v4(
     min_freq: float = 50.0,
     energy_thresh: Optional[float] = None,
     min_voiced_ms: Optional[float] = None,
-    ignore_start_frames: int = 50
+    ignore_start_frames: int = 25
 ):
     temp_input = f"temp_input_v4_{os.getpid()}_{filename}"
     temp_wav = f"temp_output_v4_{os.getpid()}.wav"
@@ -1178,7 +1178,7 @@ async def get_pitch_v4(
     min_freq: Optional[float] = 50.0,
     energy_thresh: Optional[float] = None,
     min_voiced_ms: Optional[float] = None,
-    ignore_start_frames: Optional[int] = 50
+    ignore_start_frames: Optional[int] = 25
 ):
     try:
         audio_bytes = await file.read()
@@ -1260,7 +1260,7 @@ async def get_pitch_from_url_v4(
     min_freq: Optional[float] = 50.0,
     energy_thresh: Optional[float] = None,
     min_voiced_ms: Optional[float] = None,
-    ignore_start_frames: Optional[int] = 50
+    ignore_start_frames: Optional[int] = 25
 ):
     try:
         response = requests.get(req.audio_url)
