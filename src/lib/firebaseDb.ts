@@ -13,6 +13,7 @@ import {
 import { ref, uploadString, getDownloadURL, listAll, deleteObject } from 'firebase/storage';
 import { firestore, storage } from './firebase';
 import { ChunkRecord, ChunkItem } from './learning-schema/types';
+import { WritingTask, StudentWriting } from './types';
 
 /**
  * Recursively removes undefined values from an object before saving to Firestore.
@@ -530,6 +531,140 @@ export async function logToneAttempt(
     console.log('[DEBUG] Tone attempt logged successfully in Firestore');
   } catch (error) {
     console.error('Error logging tone attempt:', error);
+    throw error;
+  }
+}
+
+export const sampleWritingTasks: Record<string, WritingTask> = {
+  'w1': { id: 'w1', title: 'My Weekend', promptText: 'Write about what you did last weekend. Use at least 5 past tense verbs.' },
+  'w2': { id: 'w2', title: 'My Favorite Food', promptText: 'Describe your favorite food and why you like it.', images: ['https://picsum.photos/400/300?random=1'] },
+  'w3': { id: 'w3', title: 'A Letter to My Future Self', promptText: 'Write a letter to yourself 5 years from now. What are your hopes and dreams?' }
+};
+
+export async function getWritingTasks(studentId: string): Promise<WritingTask[]> {
+  try {
+    const tasksPath = `students/${studentId}/writingTasks`;
+    const q = query(collection(firestore, tasksPath));
+    const snap = await getDocs(q);
+    
+    const customTasks: WritingTask[] = [];
+    let hiddenIds: string[] = [];
+
+    snap.forEach(docSnap => {
+      if (docSnap.id === 'hidden_samples') {
+        hiddenIds = docSnap.data().hiddenIds || [];
+      } else {
+        const data = docSnap.data();
+        if (!data.isDeleted) {
+          customTasks.push({
+            id: docSnap.id,
+            title: data.title || '',
+            promptText: data.promptText || '',
+            images: data.images || [],
+            suggestedWordCount: data.suggestedWordCount,
+            createdAt: data.createdAt?.toMillis ? data.createdAt.toMillis() : (data.createdAt || Date.now()),
+            updatedAt: data.updatedAt?.toMillis ? data.updatedAt.toMillis() : (data.updatedAt || Date.now())
+          });
+        }
+      }
+    });
+
+    const customTaskIds = new Set(customTasks.map(t => t.id));
+    const mergedTasks: WritingTask[] = [...customTasks];
+
+    Object.values(sampleWritingTasks).forEach(sample => {
+      if (!customTaskIds.has(sample.id) && !hiddenIds.includes(sample.id)) {
+        mergedTasks.push(sample);
+      }
+    });
+
+    return mergedTasks;
+  } catch (error) {
+    console.error('Error fetching writing tasks from Firestore:', error);
+    throw error;
+  }
+}
+
+export async function saveWritingTask(studentId: string, task: WritingTask): Promise<void> {
+  try {
+    const taskRef = doc(firestore, `students/${studentId}/writingTasks/${task.id}`);
+    const sanitized = sanitizeForFirestore({
+      title: task.title,
+      promptText: task.promptText,
+      images: task.images || [],
+      suggestedWordCount: task.suggestedWordCount || null,
+      createdAt: task.createdAt ? task.createdAt : Date.now(),
+      updatedAt: Date.now(),
+      isDeleted: false
+    });
+    
+    await setDoc(taskRef, sanitized, { merge: true });
+  } catch (error) {
+    console.error('Error saving writing task to Firestore:', error);
+    throw error;
+  }
+}
+
+export async function deleteWritingTask(studentId: string, taskId: string, isSample: boolean): Promise<void> {
+  try {
+    if (isSample) {
+      const docRef = doc(firestore, `students/${studentId}/writingTasks/hidden_samples`);
+      const docSnap = await getDoc(docRef);
+      let currentHidden: string[] = [];
+      if (docSnap.exists()) {
+        currentHidden = docSnap.data().hiddenIds || [];
+      }
+      if (!currentHidden.includes(taskId)) {
+        const updated = [...currentHidden, taskId];
+        await setDoc(docRef, { hiddenIds: updated }, { merge: true });
+      }
+    } else {
+      const docRef = doc(firestore, `students/${studentId}/writingTasks/${taskId}`);
+      await updateDoc(docRef, {
+        isDeleted: true,
+        updatedAt: serverTimestamp()
+      });
+    }
+  } catch (error) {
+    console.error('Error deleting writing task in Firestore:', error);
+    throw error;
+  }
+}
+
+export async function getStudentWriting(studentId: string, taskId: string): Promise<StudentWriting | null> {
+  try {
+    const docRef = doc(firestore, `students/${studentId}/writings/${taskId}`);
+    const docSnap = await getDoc(docRef);
+    if (!docSnap.exists()) return null;
+    
+    const data = docSnap.data();
+    return {
+      studentId,
+      taskId,
+      draftText: data.draftText || '',
+      submittedText: data.submittedText || '',
+      aiFeedback: data.aiFeedback || '',
+      status: data.status || 'not_started',
+      createdAt: data.createdAt?.toMillis ? data.createdAt.toMillis() : data.createdAt,
+      updatedAt: data.updatedAt?.toMillis ? data.updatedAt.toMillis() : data.updatedAt
+    };
+  } catch (error) {
+    console.error('Error fetching student writing from Firestore:', error);
+    throw error;
+  }
+}
+
+export async function saveStudentWriting(studentId: string, taskId: string, updates: Partial<StudentWriting>): Promise<void> {
+  try {
+    const docRef = doc(firestore, `students/${studentId}/writings/${taskId}`);
+    const sanitized = sanitizeForFirestore({
+      ...updates,
+      updatedAt: serverTimestamp()
+    });
+    
+    await setDoc(docRef, sanitized, { merge: true });
+  } catch (error) {
+    console.error('Error saving student writing in Firestore:', error);
     throw error;
   }
 }

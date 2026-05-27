@@ -129,7 +129,16 @@ export default function Navbar() {
         ) : (
           <>
             {barItems.map((item: any) => (
-              <NavLink key={item.id} to={`/student/${effectiveStudentId}${item.path}`} current={location.pathname}>
+              <NavLink 
+                key={item.id} 
+                to={`/student/${effectiveStudentId}${item.path}`} 
+                current={location.pathname}
+                onClick={() => {
+                  if (item.id === 'tone') {
+                    window.dispatchEvent(new CustomEvent('reset-tone-mode'));
+                  }
+                }}
+              >
                 {item.name}
               </NavLink>
             ))}
@@ -152,7 +161,16 @@ export default function Navbar() {
                   display: 'flex', flexDirection: 'column', padding: '0.5rem 0'
                 }}>
                   {moreItems.map((item: any) => (
-                    <DropdownLink key={item.id} to={`/student/${effectiveStudentId}${item.path}`} onClick={() => setMoreOpen(false)}>
+                    <DropdownLink 
+                      key={item.id} 
+                      to={`/student/${effectiveStudentId}${item.path}`} 
+                      onClick={() => {
+                        setMoreOpen(false);
+                        if (item.id === 'tone') {
+                          window.dispatchEvent(new CustomEvent('reset-tone-mode'));
+                        }
+                      }}
+                    >
                       {item.name}
                     </DropdownLink>
                   ))}
@@ -192,11 +210,12 @@ function DropdownLink({ to, children, onClick }: { to: string; children: React.R
   );
 }
 
-function NavLink({ to, children, current }: { to: string; children: React.ReactNode; current: string }) {
+function NavLink({ to, children, current, onClick }: { to: string; children: React.ReactNode; current: string; onClick?: () => void }) {
   const isActive = current === to || (to !== '/' && current.startsWith(to));
   return (
     <Link
       to={to}
+      onClick={onClick}
       style={{
         padding: '0.5rem 0.25rem', textDecoration: 'none', fontSize: '0.95rem',
         color: isActive ? 'var(--primary)' : 'var(--text-muted)',

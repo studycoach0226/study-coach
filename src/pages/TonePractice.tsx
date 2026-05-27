@@ -12,7 +12,7 @@ import { evaluateTypedAnswer } from '../lib/aiService';
 const SPEECH_API_BASE = (import.meta as any).env.VITE_SPEECH_API_BASE || "http://localhost:8000";
 const ENABLE_VISIBLE_WINDOW_SLICING = false;
 const ENABLE_BACKEND_GREEN_LINE = true;
-const GREEN_LINE_BASELINE_MODE: "match_red_v3" | "v4_voiced_region" = "v4_voiced_region";
+// const GREEN_LINE_BASELINE_MODE: "match_red_v3" | "v4_voiced_region" = "v4_voiced_region";
 
 export default function TonePractice() {
   const navigate = useNavigate();
@@ -21,6 +21,8 @@ export default function TonePractice() {
   const [practiceQueue, setPracticeQueue] = useState<{ item: LearningItem, record: StudentLearningRecord, task: GeneratedTask }[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [viewMode, setViewMode] = useState<'practice' | 'overview'>('practice');
+  const [toneMode, setToneMode] = useState<'selection' | 'practice' | 'compare'>('selection');
+  const [showReference, setShowReference] = useState(false);
 
   // Self Test states
   const [typedAnswer, setTypedAnswer] = useState('');
@@ -233,7 +235,19 @@ export default function TonePractice() {
     recordingInfoRef.current = currentRecordingInfo;
   }, [currentRecordingInfo]);
 
+  useEffect(() => {
+    const handleReset = () => {
+      setToneMode('selection');
+      resetToneStates();
+    };
+    window.addEventListener('reset-tone-mode', handleReset);
+    return () => {
+      window.removeEventListener('reset-tone-mode', handleReset);
+    };
+  }, []);
+
   const resetToneStates = () => {
+    setShowReference(false);
     setTypedAnswer('');
     setFeedback(null);
     setShowHints(false);
@@ -511,6 +525,10 @@ export default function TonePractice() {
         const smoothed = generatePurpleCurve(filteredBlueCurve);
         setPurpleCurve(smoothed);
 
+        if (toneMode === 'compare') {
+          fetchContourScore(targetCurve, smoothed);
+        }
+
         const mimeType = recorder.mimeType || 'audio/webm';
         const originalFullBlob = new Blob(chunks, { type: mimeType });
         const url = URL.createObjectURL(originalFullBlob);
@@ -701,7 +719,7 @@ export default function TonePractice() {
 
   // getTtsText was removed because it was unused and caused build errors.
 
-  const renderPitchLine = (data: number[], color: string, strokeWidth: number, opacity = 1) => {
+  const renderPitchLine = (data: number[], color: string, strokeWidth: number, opacity = 1, isDashed = false) => {
     if (!Array.isArray(data) || data.length < 2) return null;
 
     const SVG_WIDTH = 500;
@@ -736,6 +754,7 @@ export default function TonePractice() {
           stroke={color}
           strokeWidth={strokeWidth}
           strokeLinecap="round"
+          strokeDasharray={isDashed ? "4,4" : undefined}
           style={{ opacity, transition: 'all 0.05s linear' }}
         />
       );
@@ -779,86 +798,19 @@ export default function TonePractice() {
     }
   };
 
-  const fetchProcessedUserCurve = async (blob: Blob) => {
-    let endpoint = '/get_pitch_v3';
-    if (GREEN_LINE_BASELINE_MODE === "match_red_v3") {
-      endpoint = '/get_pitch_v3';
-    } else if (GREEN_LINE_BASELINE_MODE === "v4_voiced_region") {
-      endpoint = '/get_pitch_v4';
-    } else {
-      if (pipelineVersion === 'v1') endpoint = '/get_pitch';
-      if (pipelineVersion === 'v2') endpoint = '/get_pitch_v2';
-      if (pipelineVersion === 'v4') endpoint = '/get_pitch_v4';
-    }
-
-    let queryParams: string[] = [];
-    if (GREEN_LINE_BASELINE_MODE === "match_red_v3") {
-      queryParams.push('conf_thresh=0.55');
-      queryParams.push('min_freq=50.0');
-    } else {
-      if (endpoint === '/get_pitch_v3' || endpoint === '/get_pitch_v4') {
-        queryParams.push(`conf_thresh=${devConfThresh}`);
-        queryParams.push(`min_freq=${devMinFreq}`);
-        if (devLiveEnergyThresh > 0) {
-          queryParams.push(`energy_thresh=${devLiveEnergyThresh}`);
-        } else if (devEnergyThresh !== '') {
-          queryParams.push(`energy_thresh=${devEnergyThresh}`);
-        }
-        if (devMinVoicedMs !== '') {
-          queryParams.push(`min_voiced_ms=${devMinVoicedMs}`);
-        }
-      }
-    }
-    const queryString = queryParams.length > 0 ? `?${queryParams.join('&')}` : '';
-    const fullUrl = `${SPEECH_API_BASE}${endpoint}${queryString}`;
-
-    console.log(`🌐 [DEBUG] Calling pitch API URL: ${fullUrl}`);
-    console.log(`🌐 [DEBUG] Uploading to ${endpoint} starts...`);
-    
-    const formData = new FormData();
-    formData.append('file', blob, 'recording.webm');
-    
-    try {
-      const res = await fetch(fullUrl, {
-        method: "POST",
-        body: formData
-      });
-      
-      console.log(`🌐 [V4 FRONTEND DEBUG] Response status: ${res.status}`);
-      
-      if (!res.ok) {
-        throw new Error(`Server returned status ${res.status}`);
-      }
-      
-      const curve = await res.json();
-      
-      if (Array.isArray(curve)) {
-        const isAllZeros = curve.every(val => val === 0);
-        console.log(`🌐 [V4 FRONTEND DEBUG] returned curve length: ${curve.length}`);
-        console.log(`🌐 [V4 FRONTEND DEBUG] first 10 returned values: [${curve.slice(0, 10).join(', ')}]`);
-        console.log(`🌐 [V4 FRONTEND DEBUG] whether all returned values are 0: ${isAllZeros}`);
-        
-        console.log(`🌐 [V4 FRONTEND DEBUG] calling setProcessedUserCurve...`);
-        setProcessedUserCurve(curve);
-        console.log(`🌐 [V4 FRONTEND DEBUG] setProcessedUserCurve called successfully`);
-        
-        fetchContourScore(targetCurve, curve);
-      } else {
-        console.error("❌ [V4 FRONTEND DEBUG] Returned curve is not an array:", curve);
-      }
-    } catch (err: any) {
-      console.error("❌ [V4 FRONTEND DEBUG] Failed to fetch processed user curve:", err.message || err);
-    }
+  const fetchProcessedUserCurve = async (_blob: Blob) => {
+    // Disabled completely for now
+    return;
   };
 
   const fetchContourScore = async (target: number[], user: number[]) => {
     console.log("📊 [DEBUG] targetCurve length:", target ? target.length : 'null/undefined');
-    console.log("📊 [DEBUG] processedUserCurve length:", user ? user.length : 'null/undefined');
+    console.log("📊 [DEBUG] user curve length for scoring:", user ? user.length : 'null/undefined');
     if (target && target.length > 0) {
       console.log("📊 [DEBUG] targetCurve (first 5):", target.slice(0, 5));
     }
     if (user && user.length > 0) {
-      console.log("📊 [DEBUG] processedUserCurve (first 5):", user.slice(0, 5));
+      console.log("📊 [DEBUG] user curve (first 5):", user.slice(0, 5));
     }
 
     if (!target || target.length === 0 || !user || user.length === 0) {
@@ -1152,12 +1104,12 @@ export default function TonePractice() {
           </div>
 
           {/* Subtle AI Score Reference */}
-          {(isScoringLoading || matchScore !== null) && (
+          {toneMode === 'compare' && (isScoringLoading || matchScore !== null) && (
             <div style={{ marginTop: '0.75rem', fontSize: '0.85rem', color: '#475569' }}>
               {isScoringLoading ? (
                 <span>⏳ Calculating score...</span>
               ) : (
-                <span>AI score: <span style={{ fontWeight: 'bold' }}>{matchScore !== null ? matchScore.toFixed(1) : '-'}</span></span>
+                <span>AI Ref.: <span style={{ fontWeight: 'bold' }}>{matchScore !== null ? matchScore.toFixed(1) : '-'}</span></span>
               )}
             </div>
           )}
@@ -1260,6 +1212,83 @@ export default function TonePractice() {
     );
   };
 
+  if (toneMode === 'selection') {
+    return (
+      <div style={{ maxWidth: '800px', margin: '4rem auto', textAlign: 'center' }}>
+        <h1 style={{ fontSize: '2.5rem', marginBottom: '1rem' }}>How do you want to practice?</h1>
+        <p style={{ color: 'var(--text-muted)', marginBottom: '3rem', fontSize: '1.1rem' }}>
+          Choose a mode to practice your tones.
+        </p>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem' }}>
+          <div 
+            className="mode-card" 
+            onClick={() => setToneMode('practice')}
+            style={{
+              border: '1px solid var(--border)',
+              borderRadius: '16px',
+              padding: '2.5rem 1.5rem',
+              cursor: 'pointer',
+              background: '#fff',
+              transition: 'transform 0.2s, box-shadow 0.2s',
+              textAlign: 'center'
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'translateY(-4px)';
+              e.currentTarget.style.boxShadow = '0 10px 15px -3px rgba(0,0,0,0.1)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'none';
+              e.currentTarget.style.boxShadow = 'none';
+            }}
+          >
+            <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>🎯</div>
+            <h3 style={{ fontSize: '1.5rem', margin: '0 0 0.5rem' }}>Practice Mode</h3>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.95rem', margin: 0 }}>
+              Focus on producing your own tone contour without distraction. Reveal the reference line later.
+            </p>
+          </div>
+
+          <div 
+            className="mode-card" 
+            onClick={() => setToneMode('compare')}
+            style={{
+              border: '1px solid var(--border)',
+              borderRadius: '16px',
+              padding: '2.5rem 1.5rem',
+              cursor: 'pointer',
+              background: '#fff',
+              transition: 'transform 0.2s, box-shadow 0.2s',
+              textAlign: 'center'
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'translateY(-4px)';
+              e.currentTarget.style.boxShadow = '0 10px 15px -3px rgba(0,0,0,0.1)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'none';
+              e.currentTarget.style.boxShadow = 'none';
+            }}
+          >
+            <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>📊</div>
+            <h3 style={{ fontSize: '1.5rem', margin: '0 0 0.5rem' }}>Compare Mode</h3>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.95rem', margin: 0 }}>
+              See the target reference line immediately and try to match the contour as you speak.
+            </p>
+          </div>
+        </div>
+
+        <button
+          className="btn btn-outline"
+          style={{ marginTop: '3rem' }}
+          onClick={() => navigate(`/student/${studentId}`)}
+        >
+          Cancel and Return
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div style={{ maxWidth: '600px', margin: '2rem auto' }}>
       <div style={{ marginBottom: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
@@ -1267,11 +1296,13 @@ export default function TonePractice() {
           <button
             className="btn btn-outline"
             style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', border: 'none' }}
-            onClick={() => navigate(`/student/${studentId}`)}
+            onClick={() => setToneMode('selection')}
           >
-            ← Exit Practice
+            ← Change Mode
           </button>
-          <h1 style={{ margin: '0.5rem 0 0' }}>Tone Practice</h1>
+          <h1 style={{ margin: '0.5rem 0 0' }}>
+            {toneMode === 'practice' ? 'Practice Mode' : 'Compare Mode'}
+          </h1>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           <div style={{ display: 'flex', background: '#e2e8f0', padding: '0.2rem', borderRadius: '8px' }}>
@@ -1429,7 +1460,7 @@ export default function TonePractice() {
             position: 'relative'
           }}>
             <svg width="500" height="300" style={{ overflow: 'visible' }}> {/* 💡 對齊 Demo 高度 */}
-              {renderPitchLine(targetCurve, "#ff4d4d", 4, 0.8)}
+              {(toneMode === 'compare' || showReference) && renderPitchLine(targetCurve, "#ff4d4d", 4, 0.8)}
               {renderPitchLine(
                 userCurve.map((val, idx) => {
                   const energy = userEnergyCurve[idx] ?? 0;
@@ -1438,9 +1469,20 @@ export default function TonePractice() {
                 "#00d2ff", 4, (!isRecording && purpleCurve.length > 0) ? 0.35 : 1
               )}
               {!isRecording && purpleCurve.length > 0 && renderPitchLine(purpleCurve, "#8b5cf6", 4, 0.8)}
-              {ENABLE_BACKEND_GREEN_LINE && processedUserCurve.length > 0 && renderPitchLine(processedUserCurve, "#10b981", 4, 1)}
             </svg>
           </div>
+
+          {toneMode === 'practice' && (
+            <div style={{ marginBottom: '1.5rem' }}>
+              <button
+                className="btn btn-outline"
+                onClick={() => setShowReference(prev => !prev)}
+                style={{ padding: '0.5rem 1.25rem', fontSize: '0.9rem', display: 'inline-flex', alignItems: 'center', gap: '0.5rem', background: '#fff' }}
+              >
+                {showReference ? '👁️ Hide Reference' : '👁️ Show Reference'}
+              </button>
+            </div>
+          )}
 
           {/* Tone Match Score Display (Temporarily Hidden) */}
           {false && (isScoringLoading || matchScore !== null) && (

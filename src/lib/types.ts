@@ -16,3 +16,25 @@ export interface Attempt {
   passed: boolean;
   usedHint: boolean;
 }
+
+export interface WritingTask {
+  id: string;
+  title: string;
+  promptText: string;
+  images?: string[];
+  suggestedWordCount?: number;
+  createdAt?: number;
+  updatedAt?: number;
+  isDeleted?: boolean;
+}
+
+export interface StudentWriting {
+  studentId: string;
+  taskId: string;
+  draftText: string;
+  submittedText: string;
+  aiFeedback: string;
+  status: 'not_started' | 'drafting' | 'submitted' | 'reviewed';
+  createdAt?: number;
+  updatedAt?: number;
+}

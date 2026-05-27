@@ -1,34 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { db } from '../lib/db';
-
-type WritingTask = {
-  id: string;
-  title: string;
-  promptText: string;
-  imageUrl?: string;
-  imageDataUrl?: string;
-  suggestedWordCount?: number;
-};
-
-const sampleWritingTasks: WritingTask[] = [
-  { 
-    id: 'w1', 
-    title: 'My Weekend', 
-    promptText: 'Write about what you did last weekend. Use at least 5 past tense verbs.' 
-  },
-  { 
-    id: 'w2', 
-    title: 'My Favorite Food', 
-    promptText: 'Describe your favorite food and why you like it.',
-    imageUrl: 'https://picsum.photos/400/300?random=1'
-  },
-  { 
-    id: 'w3', 
-    title: 'A Letter to My Future Self', 
-    promptText: 'Write a letter to yourself 5 years from now. What are your hopes and dreams?' 
-  }
-];
+import {
+  getWritingTasks,
+  saveWritingTask,
+  deleteWritingTask
+} from '../lib/firebaseDb';
+import { WritingTask } from '../lib/types';
 
 export default function StudentWriting() {
   const navigate = useNavigate();
@@ -41,44 +19,61 @@ export default function StudentWriting() {
   const [newId, setNewId] = useState('');
   const [newTitle, setNewTitle] = useState('');
   const [newPromptText, setNewPromptText] = useState('');
-  const [newImageDataUrl, setNewImageDataUrl] = useState('');
+  const [newImages, setNewImages] = useState<string[]>([]);
   const [newWordCount, setNewWordCount] = useState('');
 
   useEffect(() => {
-    // Load defaults + custom
-    const loadTasks = () => {
-      const saved = localStorage.getItem('custom_writing_tasks');
-      const customTasks: WritingTask[] = saved ? JSON.parse(saved) : [];
-      setWritingItems([...sampleWritingTasks, ...customTasks]);
+    if (!studentId) {
       setLoading(false);
-    };
-    
-    // Simulate API load
-    setTimeout(loadTasks, 500);
-  }, []);
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    // Check file size (1MB = 1024 * 1024 bytes)
-    if (file.size > 1024 * 1024) {
-      alert('檔案太大了！請上傳小於 1MB 的圖片。');
-      e.target.value = ''; // Reset input
-      setNewImageDataUrl('');
       return;
     }
+    
+    getWritingTasks(studentId)
+      .then(tasks => {
+        setWritingItems(tasks);
+      })
+      .catch(err => {
+        console.error('Failed to load writing tasks:', err);
+      })
+      .finally(() => {
+        setLoading(false);
+      });
+  }, [studentId]);
 
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      setNewImageDataUrl(reader.result as string);
-    };
-    reader.readAsDataURL(file);
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    Array.from(files).forEach(file => {
+      // Check file size (1MB = 1024 * 1024 bytes)
+      if (file.size > 1024 * 1024) {
+        alert(`檔案 ${file.name} 太大了！請上傳小於 1MB 的圖片。`);
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setNewImages(prev => [...prev, reader.result as string]);
+      };
+      reader.readAsDataURL(file);
+    });
+    e.target.value = ''; // Reset input
   };
 
-  const handleCreateTask = () => {
+  const handleDeleteNewImage = (idxToDelete: number) => {
+    setNewImages(prev => prev.filter((_, idx) => idx !== idxToDelete));
+  };
+
+  const handleCreateTask = async () => {
     if (!newId || !newTitle || !newPromptText) {
       alert('Please fill in Task ID, Title, and Prompt Text!');
+      return;
+    }
+    if (!studentId) return;
+
+    // Check if ID already exists
+    if (writingItems.some(t => t.id === newId)) {
+      alert('Task ID already exists! Please use a unique ID.');
       return;
     }
 
@@ -86,31 +81,53 @@ export default function StudentWriting() {
       id: newId,
       title: newTitle,
       promptText: newPromptText,
-      imageDataUrl: newImageDataUrl || undefined,
-      suggestedWordCount: newWordCount ? parseInt(newWordCount) : undefined
+      images: newImages,
+      suggestedWordCount: newWordCount ? parseInt(newWordCount) : undefined,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
     };
 
-    const saved = localStorage.getItem('custom_writing_tasks');
-    const customTasks: WritingTask[] = saved ? JSON.parse(saved) : [];
+    try {
+      setLoading(true);
+      await saveWritingTask(studentId, newTask);
+      const updated = await getWritingTasks(studentId);
+      setWritingItems(updated);
+      
+      // Reset form
+      setShowForm(false);
+      setNewId('');
+      setNewTitle('');
+      setNewPromptText('');
+      setNewImages([]);
+      setNewWordCount('');
+    } catch (err) {
+      alert('Failed to save writing task: ' + err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteTask = async (taskId: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // Stop navigation to practice page
     
-    // Check if ID already exists
-    if (sampleWritingTasks.some(t => t.id === newId) || customTasks.some(t => t.id === newId)) {
-      alert('Task ID already exists! Please use a unique ID.');
+    if (!window.confirm('Are you sure you want to delete this writing task?')) {
       return;
     }
+    if (!studentId) return;
 
-    const updatedCustom = [...customTasks, newTask];
-    localStorage.setItem('custom_writing_tasks', JSON.stringify(updatedCustom));
-    
-    setWritingItems([...sampleWritingTasks, ...updatedCustom]);
-    
-    // Reset form
-    setShowForm(false);
-    setNewId('');
-    setNewTitle('');
-    setNewPromptText('');
-    setNewImageDataUrl('');
-    setNewWordCount('');
+    // Check if it is a sample task
+    const isSample = ['w1', 'w2', 'w3'].includes(taskId);
+
+    try {
+      setLoading(true);
+      await deleteWritingTask(studentId, taskId, isSample);
+      const updated = await getWritingTasks(studentId);
+      setWritingItems(updated);
+    } catch (err) {
+      alert('Failed to delete task: ' + err);
+    } finally {
+      setLoading(false);
+    }
   };
 
   if (loading) {
@@ -151,11 +168,37 @@ export default function StudentWriting() {
               <textarea className="input-field" style={{ minHeight: '100px', resize: 'vertical' }} value={newPromptText} onChange={(e) => setNewPromptText(e.target.value)} placeholder="寫作題目與要求..." />
             </div>
             <div>
-              <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 600 }}>Upload Image (Optional)</label>
-              <input type="file" accept="image/png, image/jpeg, image/jpg, image/webp" onChange={handleFileChange} />
-              {newImageDataUrl && (
-                <div style={{ marginTop: '0.5rem' }}>
-                  <img src={newImageDataUrl} alt="Preview" style={{ maxWidth: '100px', borderRadius: '4px' }} />
+              <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 600 }}>Upload Images (Optional)</label>
+              <input type="file" accept="image/png, image/jpeg, image/jpg, image/webp" multiple onChange={handleFileChange} />
+              {newImages.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginTop: '0.5rem' }}>
+                  {newImages.map((img, idx) => (
+                    <div key={idx} style={{ position: 'relative', display: 'inline-block' }}>
+                      <img src={img} alt="Preview" style={{ maxWidth: '60px', maxHeight: '60px', borderRadius: '4px', border: '1px solid var(--border)' }} />
+                      <button
+                        onClick={() => handleDeleteNewImage(idx)}
+                        type="button"
+                        style={{
+                          position: 'absolute',
+                          top: '-5px',
+                          right: '-5px',
+                          background: '#dc2626',
+                          color: '#fff',
+                          border: 'none',
+                          borderRadius: '50%',
+                          width: '18px',
+                          height: '18px',
+                          fontSize: '0.65rem',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
@@ -183,9 +226,35 @@ export default function StudentWriting() {
               <div
                 key={item.id}
                 className="clickable-card"
+                style={{ position: 'relative', paddingRight: '2.5rem' }}
                 onClick={() => navigate(`/student/${studentId}/writing/${item.id}`)}
               >
-                <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem', fontWeight: 600 }}>
+                <button
+                  onClick={(e) => handleDeleteTask(item.id, e)}
+                  style={{
+                    position: 'absolute',
+                    top: '12px',
+                    right: '12px',
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: '#ef4444',
+                    fontSize: '1rem',
+                    padding: '4px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    borderRadius: '4px',
+                    transition: 'background-color 0.2s',
+                    zIndex: 2
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#fee2e2'}
+                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                  title="Delete task"
+                >
+                  🗑️
+                </button>
+                <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', fontWeight: 600 }}>
                   Task {item.id.toUpperCase()}
                 </div>
                 <h3 style={{ margin: '0.25rem 0', fontSize: '1.2rem' }}>
