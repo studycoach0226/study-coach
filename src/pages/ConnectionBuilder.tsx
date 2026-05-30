@@ -66,6 +66,7 @@ export default function ConnectionBuilder() {
   // AI Connection Suggestions State
   const [aiSuggestions, setAiSuggestions] = useState<SelectedConnection[]>([]);
   const [isAiSuggestionsLoading, setIsAiSuggestionsLoading] = useState(false);
+  const [aiSuggestionsError, setAiSuggestionsError] = useState<string | null>(null);
   const [voicePref, setVoicePref] = useState<'female' | 'male' | 'system'>('system');
   const [availableGenders, setAvailableGenders] = useState<('female' | 'male')[]>(['female']);
   const [isGeneratingCharacters, setIsGeneratingCharacters] = useState<{[key: string]: boolean}>({});
@@ -93,6 +94,7 @@ export default function ConnectionBuilder() {
     setErrorMessage(null);
     setSaveError(null);
     setAiSuggestions([]);
+    setAiSuggestionsError(null);
     setEditingConnectionIds(new Set());
   };
 
@@ -226,6 +228,7 @@ export default function ConnectionBuilder() {
 
   const loadAiSuggestions = async (item: ChunkItem, sId: string) => {
     setIsAiSuggestionsLoading(true);
+    setAiSuggestionsError(null);
     try {
       const allRecords = db.getLearningRecords().filter(r => r.studentId === sId);
       const allItems = db.getLearningItems();
@@ -250,6 +253,7 @@ export default function ConnectionBuilder() {
       } as SelectedConnection)));
     } catch (error) {
       console.error('Failed to load AI suggestions:', error);
+      setAiSuggestionsError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsAiSuggestionsLoading(false);
     }
@@ -1048,6 +1052,18 @@ export default function ConnectionBuilder() {
             <div style={{ textAlign: 'center', padding: '2rem' }}>
               <div className="spinner" style={{ width: '30px', height: '30px', border: '3px solid var(--border)', borderTopColor: 'var(--primary)', borderRadius: '50%', animation: 'spin 1s linear infinite', margin: '0 auto' }} />
               <p style={{ color: 'var(--text-muted)', marginTop: '1rem', fontSize: '0.9rem' }}>Writing teacher notes...</p>
+            </div>
+          ) : aiSuggestionsError ? (
+            <div style={{ textAlign: 'center', padding: '1.5rem', background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '12px', gridColumn: '1/-1' }}>
+              <p style={{ color: 'var(--danger)', fontWeight: 'bold', margin: '0 0 0.5rem 0' }}>⚠️ Failed to load AI suggestions</p>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', margin: '0 0 1rem 0' }}>{aiSuggestionsError}</p>
+              <button 
+                className="btn btn-outline" 
+                style={{ fontSize: '0.85rem', background: '#fff', padding: '0.4rem 1rem' }}
+                onClick={() => loadAiSuggestions(currentItem as ChunkItem, studentId || '')}
+              >
+                Retry
+              </button>
             </div>
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1rem' }}>

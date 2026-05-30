@@ -310,8 +310,9 @@ export async function generateConnectionSuggestions(params: {
       } catch (e) {
         errorBody = '(could not parse error body)';
       }
-      console.error(`❌ Backend AI Suggestions Error: ${response.status} - Body: ${errorBody}`);
-      return [];
+      const errMsg = `Backend AI Suggestions Error: ${response.status} - Body: ${errorBody}`;
+      console.error(`❌ ${errMsg}`);
+      throw new Error(errMsg);
     }
 
     const result = await response.json();
@@ -319,7 +320,7 @@ export async function generateConnectionSuggestions(params: {
     return result;
   } catch (error) {
     console.error('❌ AI Connection Suggestions Error:', error);
-    return [];
+    throw error;
   }
 }
 
