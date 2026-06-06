@@ -16,7 +16,6 @@ const DEFAULT_NAV_SETTINGS: NavItem[] = [
   { id: 'reading', name: 'Reading', path: '/reading', location: 'bar' },
   { id: 'writing', name: 'Writing', path: '/writing', location: 'bar' },
   { id: 'tone', name: 'Tone', path: '/tone-practice', location: 'more' },
-  { id: 'exercises', name: 'Exercises', path: '/exercises', location: 'more' },
   { id: 'report', name: 'Report', path: '/report', location: 'more' }
 ];
 
@@ -28,7 +27,13 @@ export default function BarSettings() {
   useEffect(() => {
     if (studentId) {
       const saved = localStorage.getItem(`navbar_settings_${studentId}`);
-      setItems(saved ? JSON.parse(saved) : DEFAULT_NAV_SETTINGS);
+      const raw = saved ? JSON.parse(saved) : DEFAULT_NAV_SETTINGS;
+      const filtered = raw.filter((item: any) => 
+        item.id !== 'exercises' && 
+        !item.id.toLowerCase().includes('pdf') && 
+        !item.name.toLowerCase().includes('pdf')
+      );
+      setItems(filtered);
     }
   }, [studentId]);
 

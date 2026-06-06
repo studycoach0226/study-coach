@@ -126,23 +126,30 @@ export default function ConnectionBuilder() {
         return;
       }
 
+      if (!sId) {
+        setErrorCode('UNKNOWN_ERROR');
+        setErrorMessage('No user logged in');
+        setStatus('error');
+        return;
+      }
+      const studentId: string = sId;
+
       setStatus('loading');
       clearMissionState();
 
+      let item = null;
+      let record = null;
+      let cloudError = null;
+
       try {
-        if (!sId) throw new Error('No user logged in');
+        const compositeId = `${studentId}_${wordIdParam}`;
+        const attemptedNewPath = `students/${studentId}/flashcards/${compositeId}`;
 
-        const compositeId = `${sId}_${wordIdParam}`;
-        const attemptedNewPath = `students/${sId}/flashcards/${compositeId}`;
-
-        console.log(`[DEBUG] ConnectionBuilder Route Params - studentId: ${sId}, learningItemId: ${wordIdParam}`);
+        console.log(`[DEBUG] ConnectionBuilder Route Params - studentId: ${studentId}, learningItemId: ${wordIdParam}`);
         console.log(`[DEBUG] ConnectionBuilder Attempting Cloud Fetch: ${attemptedNewPath}`);
 
         // REQUIREMENT: Firebase is the source of truth
-        const cloudDoc = await getFlashcardRecord(sId, wordIdParam);
-        
-        let item;
-        let record;
+        const cloudDoc = await getFlashcardRecord(studentId, wordIdParam);
 
         if (cloudDoc) {
           console.log(`[DEBUG] Cloud record FOUND. Path: ${cloudDoc.firebasePath}`);
@@ -157,15 +164,25 @@ export default function ConnectionBuilder() {
         } else {
           // Fallback to local only if not found in cloud
           console.log(`[DEBUG] Cloud record NOT FOUND. Falling back to local lookup...`);
-          item = db.getLearningItems().find(i => i.id === wordIdParam);
-          record = db.getLearningRecord(sId, wordIdParam);
+          item = db.getLearningItems().find(i => i.id === wordIdParam) || null;
+          record = db.getLearningRecord(studentId, wordIdParam) || null;
           console.log(`[DEBUG] Local lookup result - item: ${!!item}, record: ${!!record}`);
         }
+      } catch (err) {
+        console.warn(`[DEBUG] Cloud fetch failed or permission denied. Falling back to local database:`, err);
+        cloudError = err;
+        
+        // Fallback to local database lookup
+        item = db.getLearningItems().find(i => i.id === wordIdParam) || null;
+        record = db.getLearningRecord(studentId, wordIdParam) || null;
+        console.log(`[DEBUG] Local lookup after error - item: ${!!item}, record: ${!!record}`);
+      }
 
+      try {
         if (!item) {
           console.error(`[DEBUG] Reconstruction FAILED: Learning item "${wordIdParam}" missing from all sources.`);
           setErrorCode('WORD_NOT_FOUND');
-          setErrorMessage(`Learning item with ID "${wordIdParam}" not found on this device or in cloud.`);
+          setErrorMessage(cloudError instanceof Error ? `Cloud load failed: ${cloudError.message}. Local copy not found.` : `Learning item with ID "${wordIdParam}" not found on this device or in cloud.`);
           setStatus('error');
           return;
         }
@@ -214,11 +231,10 @@ export default function ConnectionBuilder() {
         setStatus('ready');
 
         // Trigger AI suggestions
-        loadAiSuggestions(chunkItem, sId);
-
+        loadAiSuggestions(chunkItem, studentId);
       } catch (err) {
         setErrorCode('UNKNOWN_ERROR');
-        setErrorMessage(err instanceof Error ? err.message : 'An unexpected error occurred.');
+        setErrorMessage(err instanceof Error ? err.message : 'An unexpected error occurred during page setup.');
         setStatus('error');
       }
     };

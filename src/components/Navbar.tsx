@@ -9,7 +9,6 @@ const DEFAULT_NAV_SETTINGS = [
   { id: 'reading', name: 'Reading', path: '/reading', location: 'bar' },
   { id: 'writing', name: 'Writing', path: '/writing', location: 'bar' },
   { id: 'tone', name: 'Tone', path: '/tone-practice', location: 'more' },
-  { id: 'exercises', name: 'Exercises', path: '/exercises', location: 'more' },
   { id: 'report', name: 'Report', path: '/report', location: 'more' }
 ];
 
@@ -30,7 +29,12 @@ export default function Navbar() {
 
   // Read nav settings from localStorage
   const savedSettingsStr = effectiveStudentId ? localStorage.getItem(`navbar_settings_${effectiveStudentId}`) : null;
-  const navSettings = savedSettingsStr ? JSON.parse(savedSettingsStr) : DEFAULT_NAV_SETTINGS;
+  const rawSettings = savedSettingsStr ? JSON.parse(savedSettingsStr) : DEFAULT_NAV_SETTINGS;
+  const navSettings = rawSettings.filter((item: any) => 
+    item.id !== 'exercises' && 
+    !item.id.toLowerCase().includes('pdf') && 
+    !item.name.toLowerCase().includes('pdf')
+  );
 
   const barItems = navSettings.filter((item: any) => item.location === 'bar');
   const moreItems = navSettings.filter((item: any) => item.location === 'more');

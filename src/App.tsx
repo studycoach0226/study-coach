@@ -18,8 +18,6 @@ import ReadingPractice from './pages/ReadingPractice';
 import TeacherStudentManager from './pages/TeacherStudentManager';
 import ListenSpeak from './pages/ListenSpeak';
 import StudentReading from './pages/StudentReading';
-import StudentExercises from './pages/StudentExercises';
-import ExercisePractice from './pages/ExercisePractice';
 import StudentWriting from './pages/StudentWriting';
 import WritingPractice from './pages/WritingPractice';
 import BarSettings from './pages/BarSettings';
@@ -48,12 +46,10 @@ export default function App() {
           <Route path="/student/:studentId/report" element={<ReportCard />} />
           <Route path="/student/:studentId/assignments" element={<StudentAssignments />} />
           <Route path="/student/:studentId/reading" element={<StudentReading />} />
-          <Route path="/student/:studentId/exercises" element={<StudentExercises />} />
           <Route path="/student/:studentId/writing" element={<StudentWriting />} />
           <Route path="/student/:studentId/writing/:writingId" element={<WritingPractice />} />
           <Route path="/student/:studentId/bar-settings" element={<BarSettings />} />
           <Route path="/student/:studentId/reading-practice/:itemId" element={<ReadingPractice />} />
-          <Route path="/student/:studentId/exercise-practice/:itemId" element={<ExercisePractice />} />
           <Route path="/student/:studentId/listen-speak" element={<ListenSpeak />} />
 
           {/* Fallback Legacy Routes */}

@@ -63,7 +63,13 @@ export default function RetrievalPractice() {
 
       const encodedItems = pairs
         .filter(pair => {
-          const isDone = pair.record.encodingStatus === 'done' || pair.record.encodingCompleted || pair.record.isConnectionBuilt;
+          const hasRecording = !!(
+            pair.record.audioUrls?.studentWord || 
+            pair.record.audioUrls?.studentChunk || 
+            pair.record.audioUrls?.focusExpression || 
+            pair.record.audioUrls?.chunk
+          );
+          const isDone = pair.record.encodingStatus === 'done' || pair.record.encodingCompleted || pair.record.isConnectionBuilt || hasRecording;
           return isDone;
         })
         .map(pair => {

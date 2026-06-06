@@ -568,7 +568,13 @@ export default function ReportCard() {
       // 2. Calculate Tone Practice stats
       const computedTone: ToneStat[] = pairs
         .filter(({ record }) => {
-          const isEligibleForTone = record.encodingStatus === 'done' || record.encodingCompleted || record.isConnectionBuilt;
+          const hasRecording = !!(
+            record.audioUrls?.studentWord || 
+            record.audioUrls?.studentChunk || 
+            record.audioUrls?.focusExpression || 
+            record.audioUrls?.chunk
+          );
+          const isEligibleForTone = record.encodingStatus === 'done' || record.encodingCompleted || record.isConnectionBuilt || hasRecording;
           return isEligibleForTone;
         })
         .map(({ item, record }) => {
