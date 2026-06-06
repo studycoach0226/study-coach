@@ -49,20 +49,118 @@ export default function RetrievalPractice() {
 
     console.log(`[DEBUG] RetrievalPractice loading for studentId: ${sId}`);
 
+    const buildQueue = (pairs: { item: LearningItem, record: StudentLearningRecord }[]) => {
+      const syncedTemplates = templateBank.getSynced();
+      const globallyEnabledIds = new Set(syncedTemplates.filter(t => t.enabled).map(t => t.template_id));
+      const syncedAssignment = assignmentStore.getSyncedByStudentId(sId);
+
+      let enabledTemplateIds: string[] = [];
+      if (syncedAssignment?.template_ids && syncedAssignment.template_ids.length > 0) {
+        enabledTemplateIds = syncedAssignment.template_ids.filter(id => globallyEnabledIds.has(id));
+      } else {
+        enabledTemplateIds = ['tA', 'tB', 'tD', 'tS'].filter(id => globallyEnabledIds.has(id));
+      }
+
+      const encodedItems = pairs
+        .filter(pair => {
+          const isDone = pair.record.encodingStatus === 'done' || pair.record.encodingCompleted || pair.record.isConnectionBuilt;
+          return isDone;
+        })
+        .map(pair => {
+          const { item, record } = pair;
+          let task: GeneratedTask | null = null;
+          const templateId = enabledTemplateIds[Math.floor(Math.random() * enabledTemplateIds.length)];
+          const syncedTemplate = syncedTemplates.find(t => t.template_id === templateId);
+
+          if (syncedTemplate) {
+            task = retrievalEngine.generateTask(item.id, templateId, syncedTemplate);
+          }
+
+          if (!task) {
+            const chunkItem = item as ChunkItem;
+            task = {
+              task_id: `fallback_${Date.now()}_${item.id}`,
+              template_id: 't_fallback',
+              content_id: item.id,
+              prompt: `What is the meaning of "${chunkItem.focusExpression}"?`,
+              expected_output: chunkItem.chunkTranslation || '',
+              hint: chunkItem.chunk ? `Hint: ${chunkItem.chunk}` : undefined,
+              created_at: new Date().toISOString()
+            };
+          }
+          return { item, record, task };
+        });
+
+      const addedIds = new Set<string>();
+      const dueItems: any[] = [];
+      const weakItems: any[] = [];
+      const extraItems: any[] = [];
+
+      encodedItems.forEach(pair => {
+        if (db.isWordDue(sId, pair.item.id)) {
+          dueItems.push(pair);
+          addedIds.add(pair.item.id);
+        }
+      });
+
+      encodedItems.forEach(pair => {
+        if (!addedIds.has(pair.item.id) && pair.record.status === 'weak') {
+          weakItems.push(pair);
+          addedIds.add(pair.item.id);
+        }
+      });
+
+      encodedItems.forEach(pair => {
+        if (!addedIds.has(pair.item.id)) {
+          extraItems.push(pair);
+          addedIds.add(pair.item.id);
+        }
+      });
+
+      const finalQueue = [...dueItems, ...weakItems, ...extraItems];
+      return { finalQueue, encodedItems };
+    };
+
+    // 1. Initial Load from Local DB (for instant availability and offline support)
+    try {
+      const studentRecords = db.getLearningRecords().filter(r => r.studentId === sId);
+      const localPairs = studentRecords.map(record => {
+        const item = db.getLearningItem(record.learningItemId);
+        return { record, item: item! };
+      }).filter(pair => pair.item !== null && pair.item !== undefined);
+      
+      console.log(`[DEBUG] Initial local lookup count: ${localPairs.length}`);
+      const localResult = buildQueue(localPairs);
+      setPracticeQueue(localResult.finalQueue);
+      (window as any)._retrievalTotalCount = localPairs.length;
+      (window as any)._retrievalReadyCount = localResult.encodedItems.length;
+    } catch (err) {
+      console.error('[DEBUG] Failed to load initial data from local DB:', err);
+    }
+
+    // 2. Fetch Cloud Records (Source of Truth)
     const loadData = async () => {
       try {
-        // 1. Fetch Cloud Records (Source of Truth)
         console.log(`[DEBUG] RetrievalPractice fetching from Firebase...`);
         const cloudDocs = await getStudentFlashcards(sId);
         console.log(`[DEBUG] Firebase records count fetched: ${cloudDocs.length}`);
+        console.log(`[DIAGNOSTIC] RetrievalPractice raw cloudDocs:`, cloudDocs);
 
         const cloudPairs = cloudDocs.map(doc => mapFirestoreToLocal(doc));
+        console.log(`[DIAGNOSTIC] RetrievalPractice cloudPairs:`, cloudPairs.map(p => ({
+          id: p.item.id,
+          expression: p.item.focusExpression,
+          recordStatus: p.record.status,
+          encodingStatus: p.record.encodingStatus,
+          encodingCompleted: p.record.encodingCompleted,
+          isConnectionBuilt: p.record.isConnectionBuilt
+        })));
 
-        // 2. Sync local db with Firebase
-        const studentRecords = db.getLearningRecords().filter(r => r.studentId === sId);
+        // Sync local db with Firebase
+        const studentRecordsAfter = db.getLearningRecords().filter(r => r.studentId === sId);
         const cloudItemIds = new Set(cloudPairs.map(p => p.item.id));
         
-        const staleLocalRecords = studentRecords.filter(r => !cloudItemIds.has(r.learningItemId));
+        const staleLocalRecords = studentRecordsAfter.filter(r => !cloudItemIds.has(r.learningItemId));
         if (staleLocalRecords.length > 0) {
           console.log(`[DEBUG] Removing ${staleLocalRecords.length} stale local records missing from Firebase`);
           staleLocalRecords.forEach(r => db.deleteLearningRecord(r.id));
@@ -73,87 +171,12 @@ export default function RetrievalPractice() {
           db.saveLearningRecord(pair.record);
         });
 
-        // 3. Prepare Queue
-        const syncedTemplates = templateBank.getSynced();
-        const globallyEnabledIds = new Set(syncedTemplates.filter(t => t.enabled).map(t => t.template_id));
-        const syncedAssignment = assignmentStore.getSyncedByStudentId(sId);
-
-        let enabledTemplateIds: string[] = [];
-        if (syncedAssignment?.template_ids && syncedAssignment.template_ids.length > 0) {
-          enabledTemplateIds = syncedAssignment.template_ids.filter(id => globallyEnabledIds.has(id));
-        } else {
-          enabledTemplateIds = ['tA', 'tB', 'tD', 'tS'].filter(id => globallyEnabledIds.has(id));
-        }
-
-        const encodedItems = cloudPairs
-          .filter(pair => {
-            const isDone = pair.record.encodingStatus === 'done' || pair.record.encodingCompleted || pair.record.isConnectionBuilt;
-            return isDone;
-          })
-          .map(pair => {
-            const { item, record } = pair;
-            let task: GeneratedTask | null = null;
-            const templateId = enabledTemplateIds[Math.floor(Math.random() * enabledTemplateIds.length)];
-            const syncedTemplate = syncedTemplates.find(t => t.template_id === templateId);
-
-            if (syncedTemplate) {
-              task = retrievalEngine.generateTask(item.id, templateId, syncedTemplate);
-            }
-
-            if (!task) {
-              const chunkItem = item as ChunkItem;
-              task = {
-                task_id: `fallback_${Date.now()}_${item.id}`,
-                template_id: 't_fallback',
-                content_id: item.id,
-                prompt: `What is the meaning of "${chunkItem.focusExpression}"?`,
-                expected_output: chunkItem.chunkTranslation || '',
-                hint: chunkItem.chunk ? `Hint: ${chunkItem.chunk}` : undefined,
-                created_at: new Date().toISOString()
-              };
-            }
-            return { item, record, task };
-          });
-
-        const addedIds = new Set<string>();
-        const dueItems: any[] = [];
-        const weakItems: any[] = [];
-        const extraItems: any[] = [];
-
-        encodedItems.forEach(pair => {
-          if (db.isWordDue(sId, pair.item.id)) {
-            dueItems.push(pair);
-            addedIds.add(pair.item.id);
-          }
-        });
-
-        encodedItems.forEach(pair => {
-          if (!addedIds.has(pair.item.id) && pair.record.status === 'weak') {
-            weakItems.push(pair);
-            addedIds.add(pair.item.id);
-          }
-        });
-
-        encodedItems.forEach(pair => {
-          if (!addedIds.has(pair.item.id)) {
-            extraItems.push(pair);
-            addedIds.add(pair.item.id);
-          }
-        });
-
-        const finalQueue = [...dueItems, ...weakItems, ...extraItems];
-        console.log(`[DEBUG] RetrievalPractice Page - studentId: ${sId}`);
-        console.log(`[DEBUG] RetrievalPractice - Firebase flashcards count: ${cloudPairs.length}`);
-        
-        encodedItems.forEach((p, idx) => {
-           console.log(`[DEBUG]   Item ${idx}: ${p.item.focusExpression}, retrievalCount: ${p.record.retrievalCount}, historyLength: ${(p.record as any).retrievalHistory?.length || 0}`);
-        });
-
-        console.log(`[DEBUG] RetrievalPractice final queue count: ${finalQueue.length}`);
-        setPracticeQueue(finalQueue);
-        // We'll also store the total count for the empty state message
+        // Rebuild queue from mapped cloud pairs
+        const cloudResult = buildQueue(cloudPairs);
+        console.log(`[DEBUG] Final synced queue count: ${cloudResult.finalQueue.length}`);
+        setPracticeQueue(cloudResult.finalQueue);
         (window as any)._retrievalTotalCount = cloudPairs.length;
-        (window as any)._retrievalReadyCount = encodedItems.length;
+        (window as any)._retrievalReadyCount = cloudResult.encodedItems.length;
       } catch (err) {
         console.error('[DEBUG] Failed to load data from Firebase:', err);
       }

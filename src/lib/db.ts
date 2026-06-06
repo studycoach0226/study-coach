@@ -135,6 +135,9 @@ export const db = {
       return Array.isArray(parsed) ? parsed : [];
     } catch { return []; }
   },
+  getLearningItem: (id: string): LearningItem | undefined => {
+    return db.getLearningItems().find(i => i.id === id);
+  },
   getLearningRecords: (): StudentLearningRecord[] => {
     try {
       const parsed = JSON.parse(localStorage.getItem(KEYS.LEARNING_RECORDS) || '[]');

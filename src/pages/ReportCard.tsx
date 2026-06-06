@@ -515,6 +515,124 @@ export default function ReportCard() {
 
     console.log(`[DEBUG] ReportCard loading for student: ${sId}`);
 
+    // Reusable helper to compute stats from { item, record } pairs
+    const computeStats = (pairs: { item: LearningItem, record: StudentLearningRecord }[]) => {
+      // 1. Calculate Flashcard stats (Self-test only)
+      const computedFlashcards: FlashcardStat[] = pairs.map(({ item, record }) => {
+        const history = (record as any).retrievalHistory || [];
+        
+        const selfTestAttempts: Attempt[] = history
+          .filter((h: any) => h.practiceMode === 'selfTest')
+          .map((h: any) => ({
+            id: h.attemptId || `att_${Date.now()}_${Math.random()}`,
+            wordId: record.learningItemId,
+            studentId: record.studentId,
+            date: h.createdAt,
+            passed: h.isCorrect,
+            mode: h.practiceMode || 'selfTest',
+            typedAnswer: h.studentAnswer || '',
+            expectedAnswer: h.expectedAnswer || '',
+            usedHint: false,
+          }))
+          .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+        const correctSelfTests = selfTestAttempts.filter(a => a.passed).length;
+        const totalSelfTests = selfTestAttempts.length;
+        const accuracy = totalSelfTests > 0 ? correctSelfTests / totalSelfTests : 0;
+
+        return {
+          item,
+          record,
+          attempts: selfTestAttempts,
+          accuracy,
+          latest: selfTestAttempts.length > 0 ? selfTestAttempts[0] : null
+        };
+      });
+
+      // Sort flashcards by latest activity
+      computedFlashcards.sort((a, b) => {
+        if (!a.latest && !b.latest) return 0;
+        if (!a.latest) return 1;
+        if (!b.latest) return -1;
+        return new Date(b.latest.date).getTime() - new Date(a.latest.date).getTime();
+      });
+
+      // Calculate summary stats based on flashcard self-tests only
+      let totalOnboarded = 0;
+      let totalRetrievalAttempts = 0;
+      computedFlashcards.forEach(f => {
+        if (f.record.encodingCompleted) totalOnboarded++;
+        totalRetrievalAttempts += f.attempts.length;
+      });
+
+      // 2. Calculate Tone Practice stats
+      const computedTone: ToneStat[] = pairs
+        .filter(({ record }) => {
+          const isEligibleForTone = record.encodingStatus === 'done' || record.encodingCompleted || record.isConnectionBuilt;
+          return isEligibleForTone;
+        })
+        .map(({ item, record }) => {
+          const history = (record as any).retrievalHistory || [];
+          
+          const toneAttempts = history
+            .filter((h: any) => h.practiceMode === 'tonePractice')
+            .map((h: any) => ({
+              id: h.attemptId || `att_${Date.now()}_${Math.random()}`,
+              wordId: record.learningItemId,
+              studentId: record.studentId,
+              date: h.createdAt,
+              isCorrect: h.isCorrect,
+              selfRating: h.selfRating,
+              selfRatingLabel: h.selfRatingLabel,
+              score: h.score
+            }))
+            .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+          const bestScore = toneAttempts.length > 0 
+            ? Math.max(...toneAttempts.map((a: any) => a.score || 0)) 
+            : null;
+          const latestScore = toneAttempts.length > 0 ? toneAttempts[0].score : null;
+
+          return {
+            item,
+            record,
+            attempts: toneAttempts,
+            bestScore,
+            latestScore,
+            latest: toneAttempts.length > 0 ? toneAttempts[0] : null
+          };
+        });
+
+      return {
+        flashcardStats: computedFlashcards,
+        toneStats: computedTone,
+        totalOnboarded,
+        totalRetrievalAttempts
+      };
+    };
+
+    // 1. Initial Load from Local DB (for instant availability and offline fallback)
+    try {
+      const studentRecords = db.getLearningRecords().filter(r => r.studentId === sId);
+      const localPairs = studentRecords.map(record => {
+        const item = db.getLearningItem(record.learningItemId);
+        return { record, item: item! };
+      }).filter(pair => pair.item !== null && pair.item !== undefined);
+      
+      console.log(`[DEBUG] ReportCard - Initial local lookup count: ${localPairs.length}`);
+      const localResult = computeStats(localPairs);
+      
+      setStats({
+        totalAttempts: localResult.totalRetrievalAttempts,
+        onboardedCount: localResult.totalOnboarded,
+      });
+      setFlashcardStats(localResult.flashcardStats);
+      setToneStats(localResult.toneStats);
+    } catch (err) {
+      console.error('[DEBUG] ReportCard - Failed to load initial data from local DB:', err);
+    }
+
+    // 2. Fetch Cloud Records (Source of Truth)
     const loadCloudData = async () => {
       try {
         const cloudDocs = await getStudentFlashcards(sId);
@@ -522,103 +640,42 @@ export default function ReportCard() {
         
         const cloudPairs = cloudDocs.map(doc => mapFirestoreToLocal(doc));
         
-        // 1. Calculate Flashcard stats (Self-test only)
-        const computedFlashcards: FlashcardStat[] = cloudPairs.map(({ item, record }) => {
-          const history = (record as any).retrievalHistory || [];
-          
-          const selfTestAttempts: Attempt[] = history
-            .filter((h: any) => h.practiceMode === 'selfTest')
-            .map((h: any) => ({
-              id: h.attemptId || `att_${Date.now()}_${Math.random()}`,
-              wordId: record.learningItemId,
-              studentId: record.studentId,
-              date: h.createdAt,
-              passed: h.isCorrect,
-              mode: h.practiceMode || 'selfTest',
-              typedAnswer: h.studentAnswer || '',
-              expectedAnswer: h.expectedAnswer || '',
-              usedHint: false,
-            }))
-            .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        // Sync local db with Firebase
+        const studentRecordsAfter = db.getLearningRecords().filter(r => r.studentId === sId);
+        const cloudItemIds = new Set(cloudPairs.map(p => p.item.id));
+        
+        // Remove stale records (missing from cloud)
+        const staleLocalRecords = studentRecordsAfter.filter(r => !cloudItemIds.has(r.learningItemId));
+        if (staleLocalRecords.length > 0) {
+          console.log(`[DEBUG] ReportCard - Removing ${staleLocalRecords.length} stale local records`);
+          staleLocalRecords.forEach(r => db.deleteLearningRecord(r.id));
+        }
 
-          const correctSelfTests = selfTestAttempts.filter(a => a.passed).length;
-          const totalSelfTests = selfTestAttempts.length;
-          const accuracy = totalSelfTests > 0 ? correctSelfTests / totalSelfTests : 0;
+        // Merge/sync cloud data into local, using updatedAt to avoid overwriting newer local edits if any
+        cloudPairs.forEach(pair => {
+          const localItem = db.getLearningItem(pair.item.id);
+          if (!localItem || (pair.item.updatedAt > (localItem.updatedAt || 0))) {
+            db.updateLearningItem(pair.item);
+          }
 
-          return {
-            item,
-            record,
-            attempts: selfTestAttempts,
-            accuracy,
-            latest: selfTestAttempts.length > 0 ? selfTestAttempts[0] : null
-          };
+          const localRecord = db.getLearningRecord(sId, pair.record.learningItemId);
+          if (!localRecord || (pair.record.updatedAt > (localRecord.updatedAt || 0))) {
+            db.saveLearningRecord(pair.record);
+          }
         });
 
-        // Sort flashcards by latest activity
-        computedFlashcards.sort((a, b) => {
-          if (!a.latest && !b.latest) return 0;
-          if (!a.latest) return 1;
-          if (!b.latest) return -1;
-          return new Date(b.latest.date).getTime() - new Date(a.latest.date).getTime();
-        });
-
-        // Calculate summary stats based on flashcard self-tests only
-        let totalOnboarded = 0;
-        let totalRetrievalAttempts = 0;
-        computedFlashcards.forEach(f => {
-          if (f.record.encodingCompleted) totalOnboarded++;
-          totalRetrievalAttempts += f.attempts.length;
-        });
-
-        // 2. Calculate Tone Practice stats
-        const computedTone: ToneStat[] = cloudPairs
-          .filter(({ record }) => {
-            const isEligibleForTone = record.encodingStatus === 'done' || record.encodingCompleted || record.isConnectionBuilt;
-            return isEligibleForTone;
-          })
-          .map(({ item, record }) => {
-            const history = (record as any).retrievalHistory || [];
-            
-            const toneAttempts = history
-              .filter((h: any) => h.practiceMode === 'tonePractice')
-              .map((h: any) => ({
-                id: h.attemptId || `att_${Date.now()}_${Math.random()}`,
-                wordId: record.learningItemId,
-                studentId: record.studentId,
-                date: h.createdAt,
-                isCorrect: h.isCorrect,
-                selfRating: h.selfRating,
-                selfRatingLabel: h.selfRatingLabel,
-                score: h.score
-              }))
-              .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
-
-            const bestScore = toneAttempts.length > 0 
-              ? Math.max(...toneAttempts.map((a: any) => a.score || 0)) 
-              : null;
-            const latestScore = toneAttempts.length > 0 ? toneAttempts[0].score : null;
-
-            return {
-              item,
-              record,
-              attempts: toneAttempts,
-              bestScore,
-              latestScore,
-              latest: toneAttempts.length > 0 ? toneAttempts[0] : null
-            };
-          });
-
-        console.log(`[DEBUG] ReportCard - Flashcards: ${computedFlashcards.length}, Tone cards with history: ${computedTone.length}`);
+        const cloudResult = computeStats(cloudPairs);
+        console.log(`[DEBUG] ReportCard - Synced Flashcards: ${cloudResult.flashcardStats.length}, Tone: ${cloudResult.toneStats.length}`);
 
         setStats({
-          totalAttempts: totalRetrievalAttempts,
-          onboardedCount: totalOnboarded,
+          totalAttempts: cloudResult.totalRetrievalAttempts,
+          onboardedCount: cloudResult.totalOnboarded,
         });
-        setFlashcardStats(computedFlashcards);
-        setToneStats(computedTone);
+        setFlashcardStats(cloudResult.flashcardStats);
+        setToneStats(cloudResult.toneStats);
 
       } catch (error) {
-        console.error('[DEBUG] ReportCard - Failed to load cloud data:', error);
+        console.error('[DEBUG] ReportCard - Failed to load/sync cloud data:', error);
       }
     };
 
